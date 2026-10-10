@@ -1,18 +1,10 @@
-/**
- * Order Controller.
- * Handles production order queries, pagination, search, detail retrieval, and secure updates.
- */
+```javascript
 const { ProductionOrder, Machine } = require('../models');
 const { calculateOrderMetrics, escapeRegex } = require('../utils/derivedMetrics');
 const { PAGINATION, ALLOWED_ORDER_SORT_FIELDS } = require('../config/thresholds');
 
-// Order Number format regex validator (e.g. PO-2026-0001)
 const ORDER_NUMBER_REGEX = /^PO-[A-Z0-9-]+$/i;
 
-/**
- * GET /api/orders
- * Returns paginated, searchable, and filtered production orders with derived metrics.
- */
 const getOrders = async (req, res, next) => {
   try {
     const {
@@ -30,7 +22,6 @@ const getOrders = async (req, res, next) => {
       Math.max(1, parseInt(limit, 10) || PAGINATION.DEFAULT_LIMIT)
     );
 
-    // Validate sort field
     const sortField = sort.startsWith('-') ? sort.slice(1) : sort;
     if (sortField && !ALLOWED_ORDER_SORT_FIELDS.includes(sortField)) {
       return res.status(400).json({
@@ -41,7 +32,6 @@ const getOrders = async (req, res, next) => {
       });
     }
 
-    // Build filter
     const queryFilter = {};
 
     if (status) {
@@ -57,7 +47,6 @@ const getOrders = async (req, res, next) => {
       ];
     }
 
-    // Query MongoDB
     const allOrders = await ProductionOrder.find(queryFilter)
       .populate('assignedMachine')
       .sort(sort)
@@ -65,7 +54,6 @@ const getOrders = async (req, res, next) => {
 
     const now = new Date();
 
-    // Enrich with derived metrics
     let enrichedOrders = allOrders.map((order) => {
       const metrics = calculateOrderMetrics(order, now);
       return {
@@ -75,7 +63,6 @@ const getOrders = async (req, res, next) => {
       };
     });
 
-    // In-memory filter for derived delayStatus if requested
     if (delayStatus) {
       enrichedOrders = enrichedOrders.filter((o) => o.delayStatus === delayStatus);
     }
@@ -99,10 +86,6 @@ const getOrders = async (req, res, next) => {
   }
 };
 
-/**
- * GET /api/orders/:orderNumber
- * Returns single order detail with derived progress and assigned machine.
- */
 const getOrderByNumber = async (req, res, next) => {
   try {
     const { orderNumber } = req.params;
@@ -145,10 +128,6 @@ const getOrderByNumber = async (req, res, next) => {
   }
 };
 
-/**
- * PATCH /api/orders/:orderNumber
- * Updates only `producedQuantity` and `status`. Rejects unknown fields and invalid ranges.
- */
 const updateOrder = async (req, res, next) => {
   try {
     const { orderNumber } = req.params;
@@ -162,7 +141,6 @@ const updateOrder = async (req, res, next) => {
       });
     }
 
-    // Whitelist allowed fields for PATCH
     const allowedUpdateFields = ['producedQuantity', 'status'];
     const payloadKeys = Object.keys(req.body);
 
@@ -200,7 +178,6 @@ const updateOrder = async (req, res, next) => {
 
     const reqQty = Number(order.requiredQuantity ?? order.quantity);
 
-    // Validate producedQuantity if provided
     if (req.body.producedQuantity !== undefined) {
       const prodQty = Number(req.body.producedQuantity);
 
@@ -233,13 +210,11 @@ const updateOrder = async (req, res, next) => {
 
       order.producedQuantity = prodQty;
 
-      // Auto-complete if 100% finished
       if (prodQty === reqQty) {
         order.status = 'completed';
       }
     }
 
-    // Validate status if provided
     if (req.body.status !== undefined) {
       const validStatuses = ['queued', 'in_progress', 'completed', 'on_hold', 'draft', 'planned', 'cancelled'];
       if (!validStatuses.includes(req.body.status)) {
@@ -270,10 +245,6 @@ const updateOrder = async (req, res, next) => {
   }
 };
 
-/**
- * POST /api/orders
- * Creates a new production work order with auto-generated PO number.
- */
 const createOrder = async (req, res, next) => {
   try {
     const {
@@ -330,7 +301,6 @@ const createOrder = async (req, res, next) => {
       });
     }
 
-    // Resolve assigned machine
     let resolvedMachineId = null;
     if (assignedMachine) {
       resolvedMachineId = assignedMachine;
@@ -341,13 +311,11 @@ const createOrder = async (req, res, next) => {
       }
     }
 
-    // Generate sequential order number (e.g. PO-2026-0013)
     const currentYear = new Date().getFullYear();
     const count = (await ProductionOrder.countDocuments()) + 1;
     const paddedCount = String(count).padStart(4, '0');
     let candidateOrderNumber = req.body.orderNumber || `PO-${currentYear}-${paddedCount}`;
 
-    // Ensure unique order number
     let exists = await ProductionOrder.exists({ orderNumber: candidateOrderNumber });
     let counter = count;
     while (exists) {
@@ -397,10 +365,6 @@ const createOrder = async (req, res, next) => {
   }
 };
 
-/**
- * DELETE /api/orders/:orderNumber
- * Deletes a production order and unassigns any allocated machine.
- */
 const deleteOrder = async (req, res, next) => {
   try {
     const { orderNumber } = req.params;
@@ -452,3 +416,4 @@ module.exports = {
   createOrder,
   deleteOrder,
 };
+```
