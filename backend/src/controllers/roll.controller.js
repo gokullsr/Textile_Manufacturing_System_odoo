@@ -1,7 +1,3 @@
-/**
- * Fabric Roll Controller.
- * Manages digital QR identity generation, quality inspections, and dispatch workflows.
- */
 const { FabricRoll, ProductionOrder, Machine, Counter } = require('../models');
 const {
   validateRollId,
@@ -13,9 +9,6 @@ const {
 const { PAGINATION, ALLOWED_ROLL_SORT_FIELDS } = require('../config/thresholds');
 const { escapeRegex } = require('../utils/derivedMetrics');
 
-/**
- * Helper to generate sequential Roll ID: FR-<YYYY>-<6-digit sequence>
- */
 const generateSequentialRollId = async (maxAttempts = 5) => {
   const currentYear = new Date().getFullYear();
   const counterKey = `roll_${currentYear}`;
@@ -25,21 +18,16 @@ const generateSequentialRollId = async (maxAttempts = 5) => {
     const padded = String(seq).padStart(6, '0');
     const candidateId = `FR-${currentYear}-${padded}`;
 
-    // Verify candidate does not already exist
     const exists = await FabricRoll.exists({ rollId: candidateId });
     if (!exists) {
       return candidateId;
     }
   }
 
-  // Fallback timestamp randomizer if all sequential attempts collide
   const randomSuffix = Math.floor(100000 + Math.random() * 900000);
   return `FR-${currentYear}-${randomSuffix}`;
 };
 
-/**
- * Format single roll document into standardized Passport API response
- */
 const formatRollPassport = (rollDoc) => {
   const roll = rollDoc.toObject ? rollDoc.toObject() : rollDoc;
 
@@ -83,15 +71,11 @@ const formatRollPassport = (rollDoc) => {
     updatedAt: roll.updatedAt,
     order: orderSummary,
     machine: machineSummary,
-    inspections: (roll.inspections || []).slice().reverse(), // Newest first
+    inspections: (roll.inspections || []).slice().reverse(),
     allowedActions,
   };
 };
 
-/**
- * GET /api/rolls
- * Query: qualityStatus, dispatchStatus, orderNumber, machineCode, search, page, limit, sort
- */
 const getRolls = async (req, res, next) => {
   try {
     const {
@@ -111,7 +95,6 @@ const getRolls = async (req, res, next) => {
       Math.max(1, parseInt(limit, 10) || PAGINATION.DEFAULT_LIMIT)
     );
 
-    // Validate sort
     const sortField = sort.startsWith('-') ? sort.slice(1) : sort;
     if (sortField && !ALLOWED_ROLL_SORT_FIELDS.includes(sortField)) {
       return res.status(400).json({
@@ -137,15 +120,14 @@ const getRolls = async (req, res, next) => {
       queryFilter.rollId = { $regex: sanitized, $options: 'i' };
     }
 
-    // Filter by orderNumber reference
     if (orderNumber) {
       const targetOrder = await ProductionOrder.findOne({
         orderNumber: orderNumber.trim().toUpperCase(),
       });
+
       if (targetOrder) {
         queryFilter.order = targetOrder._id;
       } else {
-        // Return empty result immediately if non-existent order queried
         return res.status(200).json({
           rolls: [],
           pagination: { page: parsedPage, limit: parsedLimit, total: 0, totalPages: 1 },
@@ -153,11 +135,11 @@ const getRolls = async (req, res, next) => {
       }
     }
 
-    // Filter by machineCode reference
     if (machineCode) {
       const targetMachine = await Machine.findOne({
         code: machineCode.trim().toUpperCase(),
       });
+
       if (targetMachine) {
         queryFilter.machine = targetMachine._id;
       } else {
@@ -195,10 +177,6 @@ const getRolls = async (req, res, next) => {
   }
 };
 
-/**
- * POST /api/rolls
- * Create new fabric roll digital passport
- */
 const createRoll = async (req, res, next) => {
   try {
     const allowedFields = [
@@ -225,7 +203,6 @@ const createRoll = async (req, res, next) => {
 
     const { orderNumber, machineCode, quantityMetres, rollId, weight, stage, producedAt } = req.body;
 
-    // 1. Validate Order reference
     if (!orderNumber || typeof orderNumber !== 'string' || orderNumber.trim() === '') {
       return res.status(422).json({
         error: {
@@ -248,7 +225,6 @@ const createRoll = async (req, res, next) => {
       });
     }
 
-    // 2. Validate Machine reference
     if (!machineCode || typeof machineCode !== 'string' || machineCode.trim() === '') {
       return res.status(422).json({
         error: {
@@ -271,7 +247,6 @@ const createRoll = async (req, res, next) => {
       });
     }
 
-    // 3. Validate Quantity
     const qtyCheck = validateQuantityMetres(quantityMetres);
     if (!qtyCheck.valid) {
       return res.status(422).json({
@@ -282,7 +257,6 @@ const createRoll = async (req, res, next) => {
       });
     }
 
-    // 4. Determine Roll ID
     let finalRollId;
     if (rollId) {
       const idCheck = validateRollId(rollId);
@@ -294,9 +268,9 @@ const createRoll = async (req, res, next) => {
           },
         });
       }
+
       finalRollId = idCheck.normalized;
 
-      // Check unique index conflict upfront for custom ID
       const exists = await FabricRoll.exists({ rollId: finalRollId });
       if (exists) {
         return res.status(409).json({
@@ -310,7 +284,6 @@ const createRoll = async (req, res, next) => {
       finalRollId = await generateSequentialRollId();
     }
 
-    // 5. Create Roll Record
     const newRoll = new FabricRoll({
       rollId: finalRollId,
       order: targetOrder._id,
@@ -350,10 +323,6 @@ const createRoll = async (req, res, next) => {
   }
 };
 
-/**
- * GET /api/rolls/:rollId
- * Retrieve full Fabric Passport with inspection history and allowed actions
- */
 const getRollByRollId = async (req, res, next) => {
   try {
     const { rollId } = req.params;
@@ -398,10 +367,6 @@ const getRollByRollId = async (req, res, next) => {
   }
 };
 
-/**
- * PATCH /api/rolls/:rollId/inspection
- * Submit a quality inspection result (PASS / REWORK / REJECT)
- */
 const submitInspection = async (req, res, next) => {
   try {
     const { rollId } = req.params;
@@ -416,7 +381,6 @@ const submitInspection = async (req, res, next) => {
       });
     }
 
-    // Reject client-supplied inspectedAt
     if (req.body.inspectedAt !== undefined) {
       return res.status(422).json({
         error: {
@@ -439,7 +403,6 @@ const submitInspection = async (req, res, next) => {
       });
     }
 
-    // Validate inspection parameters
     const check = validateInspectionInput(req.body);
     if (!check.valid) {
       return res.status(422).json({
@@ -450,7 +413,6 @@ const submitInspection = async (req, res, next) => {
       });
     }
 
-    // 1. Fetch current roll
     const roll = await FabricRoll.findOne({ rollId: idCheck.normalized });
     if (!roll) {
       return res.status(404).json({
@@ -461,7 +423,6 @@ const submitInspection = async (req, res, next) => {
       });
     }
 
-    // 2. Guard: DISPATCHED roll cannot be inspected
     if (roll.dispatchStatus === 'DISPATCHED') {
       return res.status(409).json({
         error: {
@@ -473,7 +434,6 @@ const submitInspection = async (req, res, next) => {
 
     const now = new Date();
 
-    // 3. New inspection history item
     const newInspection = {
       result: check.result,
       defectNotes: check.defectNotes,
@@ -481,8 +441,6 @@ const submitInspection = async (req, res, next) => {
       inspectedAt: now,
     };
 
-    // 4. Atomic conditional update:
-    // If current dispatchStatus is READY_FOR_DISPATCH and inspection result is REWORK/REJECT, reset to NOT_DISPATCHED
     let nextDispatchStatus = roll.dispatchStatus;
     if (roll.dispatchStatus === 'READY_FOR_DISPATCH' && check.result !== 'PASS') {
       nextDispatchStatus = 'NOT_DISPATCHED';
@@ -491,7 +449,7 @@ const submitInspection = async (req, res, next) => {
     const updatedRoll = await FabricRoll.findOneAndUpdate(
       {
         rollId: idCheck.normalized,
-        dispatchStatus: { $ne: 'DISPATCHED' }, // Atomic concurrency guard
+        dispatchStatus: { $ne: 'DISPATCHED' },
       },
       {
         $set: {
@@ -526,10 +484,6 @@ const submitInspection = async (req, res, next) => {
   }
 };
 
-/**
- * PATCH /api/rolls/:rollId/dispatch
- * Transition dispatch lifecycle (READY_FOR_DISPATCH / DISPATCHED / NOT_DISPATCHED)
- */
 const updateDispatchStatus = async (req, res, next) => {
   try {
     const { rollId } = req.params;
@@ -577,7 +531,6 @@ const updateDispatchStatus = async (req, res, next) => {
       });
     }
 
-    // Validate dispatch transition rules
     const transitionCheck = validateDispatchTransition(
       roll.dispatchStatus,
       roll.qualityStatus,
@@ -599,11 +552,10 @@ const updateDispatchStatus = async (req, res, next) => {
       dispatchedAt: dispatchStatus === 'DISPATCHED' ? now : null,
     };
 
-    // Atomic update
     const updatedRoll = await FabricRoll.findOneAndUpdate(
       {
         rollId: idCheck.normalized,
-        dispatchStatus: { $ne: 'DISPATCHED' }, // Concurrency guard
+        dispatchStatus: { $ne: 'DISPATCHED' },
       },
       {
         $set: updateSet,
@@ -637,3 +589,4 @@ module.exports = {
   submitInspection,
   updateDispatchStatus,
 };
+```
