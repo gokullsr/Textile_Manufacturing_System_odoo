@@ -1,13 +1,5 @@
-/**
- * Machine Controller.
- * Manages factory machine queries and operational state inspection.
- */
 const { Machine, ProductionOrder } = require('../models');
 
-/**
- * GET /api/machines
- * Returns all factory machines with their current assigned production orders and state breakdown.
- */
 const getMachines = async (req, res, next) => {
   try {
     const { status } = req.query;
@@ -22,7 +14,6 @@ const getMachines = async (req, res, next) => {
       .sort('code')
       .lean();
 
-    // Map machines to consistent presentation format
     const formattedMachines = machines.map((machine) => {
       const assignedOrder = machine.currentAssignedOrder;
       return {
