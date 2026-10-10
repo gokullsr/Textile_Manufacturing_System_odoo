@@ -1,17 +1,8 @@
-/**
- * Dashboard Controller.
- * Computes live operational metrics directly from MongoDB collections.
- */
 const { ProductionOrder, Machine, MaterialStock } = require('../models');
 const { calculateOrderMetrics, calculateStockMetrics } = require('../utils/derivedMetrics');
 
-/**
- * GET /api/dashboard/summary
- * Returns comprehensive factory telemetry KPIs, attention items, machine statuses, and stock warnings.
- */
 const getDashboardSummary = async (req, res, next) => {
   try {
-    // 1. Query all orders, machines, and stocks concurrently
     const [orders, machines, stockItems] = await Promise.all([
       ProductionOrder.find().populate('assignedMachine').lean(),
       Machine.find().populate('currentAssignedOrder').lean(),
@@ -20,7 +11,6 @@ const getDashboardSummary = async (req, res, next) => {
 
     const now = new Date();
 
-    // 2. Compute order metrics
     let activeOrders = 0;
     let completedOrders = 0;
     let delayedCount = 0;
@@ -74,7 +64,6 @@ const getDashboardSummary = async (req, res, next) => {
       }
     });
 
-    // Sort attention orders: delayed first, then at_risk, then insufficient_data
     attentionOrders.sort((a, b) => {
       const severity = { delayed: 1, at_risk: 2, insufficient_data: 3, on_track: 4 };
       const sevA = severity[a.delayStatus] || 5;
@@ -83,7 +72,6 @@ const getDashboardSummary = async (req, res, next) => {
       return (a.daysRemaining || 0) - (b.daysRemaining || 0);
     });
 
-    // 3. Compute machine metrics
     const machinesByState = {
       available: 0,
       running: 0,
@@ -99,7 +87,6 @@ const getDashboardSummary = async (req, res, next) => {
       machinesByState[state] = (machinesByState[state] || 0) + 1;
     });
 
-    // 4. Compute stock metrics
     let lowStockCount = 0;
     let outOfStockCount = 0;
     let okStockCount = 0;
@@ -124,14 +111,12 @@ const getDashboardSummary = async (req, res, next) => {
       }
     });
 
-    // Sort stock warnings: out of stock first, then by highest shortfall
     stockWarnings.sort((a, b) => {
       if (a.stockLevel === 'out' && b.stockLevel !== 'out') return -1;
       if (b.stockLevel === 'out' && a.stockLevel !== 'out') return 1;
       return b.shortfall - a.shortfall;
     });
 
-    // 5. Structure clean response shape
     return res.status(200).json({
       timestamp: now.toISOString(),
       kpis: {
@@ -156,8 +141,8 @@ const getDashboardSummary = async (req, res, next) => {
           totalItems: stockItems.length,
         },
       },
-      attentionOrders: attentionOrders.slice(0, 5), // Top 5 urgent orders
-      stockWarnings: stockWarnings.slice(0, 5),     // Top 5 critical stock items
+      attentionOrders: attentionOrders.slice(0, 5),
+      stockWarnings: stockWarnings.slice(0, 5),
       ordersByStatus: Object.entries(statusCounts)
         .filter(([_, count]) => count > 0)
         .map(([status, count]) => ({ status, count })),
