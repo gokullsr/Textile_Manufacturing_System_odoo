@@ -1,3 +1,4 @@
+
 import React from 'react';
 
 export const ProgressBar = ({ percent = 0, showLabel = true, size = 'md', className = '' }) => {
