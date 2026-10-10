@@ -1,0 +1,14 @@
+{
+  "name": "loomiq",
+  "version": "0.1.0",
+  "private": true,
+  "description": "LoomIQ - Textile Factory Operations & Traceability Platform",
+  "scripts": {
+    "dev:backend": "npm --prefix backend run dev",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "build:frontend": "npm --prefix frontend run build",
+    "test:models": "npm --prefix backend run test:models"
+  },
+  "author": "",
+  "license": "ISC"
+}
