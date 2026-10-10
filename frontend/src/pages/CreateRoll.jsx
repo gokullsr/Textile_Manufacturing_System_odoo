@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { createRoll } from '../services/rollService';
@@ -12,14 +13,11 @@ export const CreateRoll = () => {
   const [orders, setOrders] = useState([]);
   const [machines, setMachines] = useState([]);
   const [fetchingOptions, setFetchingOptions] = useState(true);
-
-  // Form State
   const [orderNumber, setOrderNumber] = useState('');
   const [machineCode, setMachineCode] = useState('');
   const [quantityMetres, setQuantityMetres] = useState('');
   const [weight, setWeight] = useState('');
   const [rollId, setRollId] = useState('');
-
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState(null);
 
@@ -31,14 +29,17 @@ export const CreateRoll = () => {
           getOrders({ limit: 50 }),
           getMachines(),
         ]);
+
         const availableOrders = ordersRes.orders || [];
         setOrders(availableOrders);
+
         if (availableOrders.length > 0) {
           setOrderNumber(availableOrders[0].orderNumber);
         }
 
         const availableMachines = machinesRes.machines || [];
         setMachines(availableMachines);
+
         if (availableMachines.length > 0) {
           setMachineCode(availableMachines[0].code || availableMachines[0].machineCode);
         }
@@ -68,6 +69,7 @@ export const CreateRoll = () => {
 
     try {
       const res = await createRoll(payload);
+
       if (res.roll?.rollId) {
         navigate(`/rolls/${res.roll.rollId}`);
       } else {
@@ -86,7 +88,6 @@ export const CreateRoll = () => {
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
-      {/* Top Back Nav */}
       <Link
         to="/rolls"
         className="inline-flex items-center gap-2 text-xs font-semibold text-slate-500 hover:text-teal-600 transition-colors"
@@ -95,7 +96,6 @@ export const CreateRoll = () => {
         <span>Back to Fabric Roll Registry</span>
       </Link>
 
-      {/* Main Form Box */}
       <div className="bg-white border border-slate-200 rounded-2xl p-6 md:p-8 shadow-sm space-y-6">
         <div className="pb-4 border-b border-slate-100">
           <div className="flex items-center gap-2.5">
@@ -119,7 +119,6 @@ export const CreateRoll = () => {
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Order Dropdown */}
           <div>
             <label className="block text-xs font-bold text-slate-700 mb-1.5">
               Production Work Order <span className="text-rose-500">*</span>
@@ -138,7 +137,6 @@ export const CreateRoll = () => {
             </select>
           </div>
 
-          {/* Machine Dropdown */}
           <div>
             <label className="block text-xs font-bold text-slate-700 mb-1.5">
               Originating Machine Workcenter <span className="text-rose-500">*</span>
@@ -160,7 +158,6 @@ export const CreateRoll = () => {
             </select>
           </div>
 
-          {/* Quantity Metres */}
           <div>
             <label className="block text-xs font-bold text-slate-700 mb-1.5">
               Roll Length in Metres <span className="text-rose-500">*</span>
@@ -176,10 +173,11 @@ export const CreateRoll = () => {
               required
               className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-xs font-mono text-slate-900 placeholder-slate-400 focus:outline-none focus:border-teal-500"
             />
-            <span className="text-[11px] text-slate-500 mt-1 block">Between 0.01 m and 5,000.00 m (max 2 decimal places).</span>
+            <span className="text-[11px] text-slate-500 mt-1 block">
+              Between 0.01 m and 5,000.00 m (max 2 decimal places).
+            </span>
           </div>
 
-          {/* Optional Weight */}
           <div>
             <label className="block text-xs font-bold text-slate-700 mb-1.5">
               Roll Weight (kg) <span className="text-slate-400 font-normal">(Optional)</span>
@@ -195,7 +193,6 @@ export const CreateRoll = () => {
             />
           </div>
 
-          {/* Optional Custom Roll ID */}
           <div>
             <label className="block text-xs font-bold text-slate-700 mb-1.5">
               Custom Roll ID <span className="text-slate-400 font-normal">(Optional — server auto-generates if blank)</span>
