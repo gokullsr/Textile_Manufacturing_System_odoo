@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { getDashboardSummary } from '../services/dashboardService';
@@ -62,18 +63,17 @@ export const Dashboard = () => {
   };
 
   const chartColors = {
-    in_progress: '#0d9488', // Teal 600
-    completed: '#10b981',   // Emerald 500
-    queued: '#6366f1',      // Indigo 500
-    on_hold: '#f59e0b',     // Amber 500
-    draft: '#64748b',       // Slate 500
-    planned: '#0284c7',     // Sky 600
-    cancelled: '#e11d48',   // Rose 600
+    in_progress: '#0d9488',
+    completed: '#10b981',
+    queued: '#6366f1',
+    on_hold: '#f59e0b',
+    draft: '#64748b',
+    planned: '#0284c7',
+    cancelled: '#e11d48',
   };
 
   return (
     <div className="space-y-8">
-      {/* Top Banner & Refresh */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200/90 shadow-sm">
         <div>
           <span className="text-xs font-bold uppercase tracking-widest text-teal-600">
@@ -86,7 +86,6 @@ export const Dashboard = () => {
             Live manufacturing orders, active looms, spindle workcenters, and raw fiber stock levels.
           </p>
         </div>
-
         <button
           onClick={fetchData}
           disabled={loading}
@@ -97,9 +96,7 @@ export const Dashboard = () => {
         </button>
       </div>
 
-      {/* KPI Cards Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-        {/* Active Orders */}
         <div className="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-xs hover:shadow-sm transition-all">
           <div className="flex items-center justify-between text-slate-600 mb-3">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Active Work Orders</span>
@@ -115,7 +112,6 @@ export const Dashboard = () => {
           </div>
         </div>
 
-        {/* At Risk & Delayed */}
         <div className="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-xs hover:shadow-sm transition-all">
           <div className="flex items-center justify-between text-slate-600 mb-3">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Delivery Risk Orders</span>
@@ -133,7 +129,6 @@ export const Dashboard = () => {
           </div>
         </div>
 
-        {/* Machines Available vs Running */}
         <div className="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-xs hover:shadow-sm transition-all">
           <div className="flex items-center justify-between text-slate-600 mb-3">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Machine Utilization</span>
@@ -151,7 +146,6 @@ export const Dashboard = () => {
           </div>
         </div>
 
-        {/* Stock Shortfall Alerts */}
         <div className="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-xs hover:shadow-sm transition-all">
           <div className="flex items-center justify-between text-slate-600 mb-3">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Stock Critical Warnings</span>
@@ -170,9 +164,7 @@ export const Dashboard = () => {
         </div>
       </div>
 
-      {/* Main Attention & Charts Section */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Left 2 Cols: Orders Needing Attention Panel */}
         <div className="lg:col-span-2 bg-white border border-slate-200/90 rounded-2xl p-6 shadow-sm flex flex-col">
           <div className="flex items-center justify-between mb-5 pb-4 border-b border-slate-100">
             <div className="flex items-center gap-2.5">
@@ -215,16 +207,13 @@ export const Dashboard = () => {
                       <StatusBadge type="order" value={order.status} />
                     </div>
                   </div>
-
                   <p className="text-xs text-slate-700 font-medium mb-3">{order.fabricType}</p>
-
                   {order.reason && (
                     <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-800 mb-3 flex items-start gap-2">
                       <Clock className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-rose-600" />
                       <span>{order.reason}</span>
                     </div>
                   )}
-
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-slate-200 text-xs">
                     <div>
                       <span className="text-slate-500 block">Produced / Target</span>
@@ -248,13 +237,11 @@ export const Dashboard = () => {
           )}
         </div>
 
-        {/* Right 1 Col: Orders Status Breakdown (Recharts) */}
         <div className="bg-white border border-slate-200/90 rounded-2xl p-6 shadow-sm flex flex-col">
           <div className="mb-4 pb-3 border-b border-slate-100">
             <h2 className="font-bold text-slate-900 text-base">Work Orders by Status</h2>
             <p className="text-xs text-slate-500">Live order state distribution in factory</p>
           </div>
-
           <div className="h-64 w-full flex-1">
             {ordersByStatus.length === 0 ? (
               <div className="h-full flex items-center justify-center text-xs text-slate-500">
@@ -293,9 +280,7 @@ export const Dashboard = () => {
         </div>
       </div>
 
-      {/* Bottom Section: Machine Status & Stock Warning Panels */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {/* Machine Status Summary */}
         <div className="bg-white border border-slate-200/90 rounded-2xl p-6 shadow-sm">
           <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
             <div className="flex items-center gap-2">
@@ -306,7 +291,6 @@ export const Dashboard = () => {
               View all machines &rarr;
             </Link>
           </div>
-
           <div className="space-y-3">
             {machineSummary.slice(0, 5).map((m) => (
               <div
@@ -332,7 +316,6 @@ export const Dashboard = () => {
           </div>
         </div>
 
-        {/* Stock Warnings Panel */}
         <div className="bg-white border border-slate-200/90 rounded-2xl p-6 shadow-sm">
           <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
             <div className="flex items-center gap-2">
@@ -343,7 +326,6 @@ export const Dashboard = () => {
               Manage inventory &rarr;
             </Link>
           </div>
-
           {stockWarnings.length === 0 ? (
             <div className="py-8 text-center text-xs text-slate-500">
               No inventory shortfalls. All materials above reorder thresholds.
@@ -361,9 +343,13 @@ export const Dashboard = () => {
                       <span className="text-slate-700 font-semibold truncate max-w-[180px]">{item.name}</span>
                     </div>
                     <div className="text-[11px] text-slate-600 mt-1 flex items-center gap-3">
-                      <span>Stock: <strong className="text-slate-900 font-mono font-semibold">{formatNumber(item.quantityOnHand)} {item.unit}</strong></span>
+                      <span>
+                        Stock: <strong className="text-slate-900 font-mono font-semibold">{formatNumber(item.quantityOnHand)} {item.unit}</strong>
+                      </span>
                       <span>•</span>
-                      <span>Reorder: <strong className="text-slate-700 font-mono">{formatNumber(item.reorderLevel)} {item.unit}</strong></span>
+                      <span>
+                        Reorder: <strong className="text-slate-700 font-mono">{formatNumber(item.reorderLevel)} {item.unit}</strong>
+                      </span>
                       {item.shortfall > 0 && (
                         <span className="text-rose-700 font-bold">
                           (Shortfall: -{formatNumber(item.shortfall)} {item.unit})
