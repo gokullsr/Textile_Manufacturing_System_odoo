@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 
@@ -11,7 +12,6 @@ export const ErrorState = ({ title = 'Failed to load data', error, onRetry }) =>
       </div>
       <h3 className="text-base font-bold text-rose-900">{title}</h3>
       <p className="text-xs text-rose-700 mt-1 max-w-lg mx-auto font-mono">{errorMessage}</p>
-
       {onRetry && (
         <button
           onClick={onRetry}
