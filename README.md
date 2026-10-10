@@ -1,78 +1,78 @@
-# LoomIQ - Textile Factory Operations & Traceability Platform
+# LoomIQ – Textile Factory Operations & Traceability Platform
 
-> **Milestone 1 & Module 2 Architecture:**  
-> Production Command Center & Digital Fabric Passport with QR Code Traceability, Quality Inspection Auditing, and Gated Dispatch Workflows.
+**Milestone 1 & Module 2:** Production Dashboard, Digital Fabric Passport, QR Traceability, Quality Auditing, and Dispatch Control.
 
----
+## 1. Project Architecture
 
-## Architecture Overview
-
-```
+```text
 loomiq/
-├── frontend/                     # React 19 + Vite + Tailwind CSS + QRCode.react + Recharts
+├── frontend/                 # React, Vite, Tailwind CSS
 │   ├── src/
-│   │   ├── components/           # UI Components (Layout, StatusBadge, ProgressBar, State cards)
-│   │   ├── pages/                # Dashboard, Orders, OrderDetail, Rolls, CreateRoll, Passport, Machines, Stock
-│   │   ├── services/             # API Client, rollService, orderService, dashboardService, etc.
-│   │   ├── utils/                # qrUtils (buildRollUrl), formatters
-│   │   └── App.jsx               # React Router configuration
-│   ├── vercel.json               # SPA routing rewrite configuration for direct deep linking
-│   ├── .env.example              # Frontend environment template
+│   │   ├── components/       # Reusable UI components
+│   │   ├── pages/            # Dashboard, Orders, Rolls, Passport, Machines, Stock
+│   │   ├── services/         # Backend API integration
+│   │   ├── utils/            # QR generation and formatters
+│   │   └── App.jsx           # Routing
+│   ├── .env.example
+│   ├── vercel.json
 │   └── package.json
-├── backend/                      # Node.js + Express + Mongoose (MongoDB)
+│
+├── backend/                  # Node.js, Express, MongoDB
 │   ├── src/
-│   │   ├── config/               # Env validation, thresholds, MongoDB connection
-│   │   ├── models/               # FabricRoll, ProductionOrder, Machine, MaterialStock, Counter
-│   │   ├── routes/               # roll.routes, order.routes, dashboard.routes, machine.routes, stock.routes, health.routes
-│   │   ├── controllers/          # Business logic handlers
-│   │   ├── utils/                # Pure business logic (derivedMetrics, rollRules)
-│   │   ├── middleware/           # Central error handler, 404 handler
-│   │   ├── app.js                # Express app setup (Helmet, CORS allowlist)
-│   │   └── server.js             # HTTP listener with graceful shutdown
-│   ├── scripts/                  # Idempotent seed script & automated test runner
-│   ├── .env.example              # Backend environment template
+│   │   ├── config/           # Environment and database setup
+│   │   ├── models/           # Database schemas
+│   │   ├── routes/            # API routes
+│   │   ├── controllers/      # Business logic
+│   │   ├── utils/            # Production and roll rules
+│   │   ├── middleware/       # Error handling
+│   │   ├── app.js
+│   │   └── server.js
+│   ├── scripts/              # Seed and test scripts
+│   ├── .env.example
 │   └── package.json
+│
 ├── .gitignore
 └── README.md
 ```
 
----
+## 2. Module 3: Explainable Delay Radar
 
-## Module 3: Explainable Delay Radar
-Identifies active production orders that may miss their delivery deadline using a deterministic, rule-based mathematical estimate (zero machine learning or black-box forecasting).
-- **Mathematical Specification & Formula:** [docs/DELAY_RADAR.md](file:///d:/study_files/HACKATON/Odoo-Textile%20_Manufac_Sys/docs/DELAY_RADAR.md)
-- **Single Source of Truth:** Centralized in `delayRadarEngine.js` for both radar view and executive dashboard KPIs.
-- **Explainable Traceability:** Provides step-by-step arithmetic (`500 - 200 = 300 m`, `300 / 100 = 3.0 days`) and deterministic suggested actions.
+Identifies production orders that may miss their delivery deadlines using rule-based calculations.
 
----
+- **Calculation:** Estimates remaining production time using pending quantity and production rate.
+- **Single source of truth:** `delayRadarEngine.js` powers both the radar view and dashboard KPIs.
+- **Explainable results:** Displays calculations and suggested actions.
+- **Documentation:** `docs/DELAY_RADAR.md`
 
-## Module 2: Fabric Passport & QR Traceability
+## 3. Module 2: Digital Fabric Passport
 
-Every manufactured fabric roll receives a **Digital Passport** carrying:
-1. **QR Identity:** Encodes `<PUBLIC_APP_URL>/rolls/<rollId>` as an SVG QR with level M error correction.
-2. **Manufacturing Traceability:** Live populated links to the parent **Production Order** (buyer, fabric specs) and originating **Machine** (loom/spindle station).
-3. **Quality Inspection Audit Trail:** Append-only history logging inspection decisions (`PASS`, `REWORK`, `REJECT`), mandatory defect notes for rework/rejects, inspector names, and immutable server timestamps.
-4. **Gated Dispatch Transitions:** Strict quality enforcement ensuring only verified `PASS` rolls can transition to `READY_FOR_DISPATCH` and `DISPATCHED` (terminal state).
+Each fabric roll receives a unique digital passport accessible through a QR code.
 
----
+1. **QR Code:** Links to `/rolls/:rollId` and uses SVG rendering with error-correction level M.
+2. **Manufacturing Details:** Displays the linked production order, buyer, fabric specifications, and originating machine.
+3. **Quality Audit Trail:** Records PASS, REWORK, and REJECT decisions, inspector names, defect notes, and server timestamps.
+4. **Dispatch Control:** Only quality-approved rolls can move to `READY_FOR_DISPATCH` and `DISPATCHED`.
+5. **Audit Integrity:** Inspection history is append-only through normal API operations, and dispatched rolls cannot transition to another state.
 
-## Quickstart & Installation
+## 4. Installation
+
+Install backend dependencies:
 
 ```bash
-# 1. Install Backend Dependencies
 cd backend
 npm install
+```
 
-# 2. Install Frontend Dependencies
+Install frontend dependencies:
+
+```bash
 cd ../frontend
 npm install
 ```
 
----
+## 5. Environment Configuration
 
-## Environment Setup
-
-### Backend Configuration (`backend/.env`)
+**Backend — `backend/.env`**
 
 ```env
 PORT=5000
@@ -81,78 +81,73 @@ MONGODB_URI=mongodb://127.0.0.1:27017/loomiq
 CORS_ORIGINS=http://localhost:5173,http://localhost:3000
 ```
 
-### Frontend Configuration (`frontend/.env`)
+**Frontend — `frontend/.env`**
 
 ```env
 VITE_API_URL=http://localhost:5000
 VITE_PUBLIC_APP_URL=http://localhost:5173
 ```
 
----
+## 6. Mobile QR Testing
 
-## Testing QR Code Scanning on Mobile Phones (Local Wi-Fi)
+To scan fabric passport QR codes using a phone on the same Wi-Fi network:
 
-To test scanning QR codes with a physical phone before cloud deployment:
+1. Find your computer's local IP address using `ipconfig` on Windows.
+2. Update `CORS_ORIGINS` in the backend `.env` with your frontend URL using that IP.
+3. Set `VITE_API_URL` and `VITE_PUBLIC_APP_URL` in the frontend `.env` to use your computer's IP address.
+4. Start the frontend:
 
-1. **Find your computer's local Wi-Fi IP address:**
-   - **Windows:** Run `ipconfig` (e.g. `192.168.1.100`)
-   - **Mac/Linux:** Run `ifconfig` or `ip a`
-2. **Update `backend/.env`:**
-   ```env
-   CORS_ORIGINS=http://localhost:5173,http://192.168.1.100:5173
-   ```
-3. **Update `frontend/.env`:**
-   ```env
-   VITE_API_URL=http://192.168.1.100:5000
-   VITE_PUBLIC_APP_URL=http://192.168.1.100:5173
-   ```
-4. **Start Vite with the `--host` flag:**
-   ```bash
-   npm --prefix frontend run dev -- --host
-   ```
-5. Point your smartphone camera at the on-screen QR code or printed label to instantly open the live Fabric Passport.
+```bash
+npm --prefix frontend run dev -- --host
+```
 
----
+5. Ensure the phone and computer are on the same network, then scan the QR code.
 
-## Seed & Automated Test Execution
+Replace the example IP address with your computer's actual local IP.
 
-### 1. Seed Demo Dataset (Idempotent Upsert)
+## 7. Database Seeding and Testing
+
+**Seed demo data:**
+
 ```bash
 cd backend
 npm run seed
 ```
 
-### 2. Reset Only Demo Records Cleanly
+**Reset demo data:**
+
 ```bash
-cd backend
 npm run seed:reset
 ```
 
-### 3. Run Automated Unit, Validation & Integration Tests
+**Run automated tests:**
+
 ```bash
-cd backend
 npm test
 ```
-*(Executes 44 automated tests verifying progress math, delay rules, roll validations, dispatch state machine, and database consistency).*
 
-### 4. Run Live E2E Passport Workflow Test
+The test suite is intended to verify production calculations, delay rules, roll validation, dispatch transitions, and database consistency.
+
+**Run the end-to-end passport test** from the project root:
+
 ```bash
 node backend/scripts/verify-e2e-passport.js
 ```
 
----
+## 8. Run the Application
 
-## Running the Application (Two Terminals)
+**Terminal 1 — Backend**
 
-### Terminal 1: Backend API
 ```bash
 cd backend
 npm run dev
 ```
 
-### Terminal 2: Frontend Client
+**Terminal 2 — Frontend**
+
 ```bash
 cd frontend
 npm run dev
 ```
-*Open `http://localhost:5173` to access the LoomIQ Command Center & Fabric Passport.*
+
+Open **http://localhost:5173** to access the LoomIQ Production Command Center and Digital Fabric Passport.
