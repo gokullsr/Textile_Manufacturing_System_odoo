@@ -1,4 +1,3 @@
-```javascript
 const { ProductionOrder, Machine } = require('../models');
 const { calculateOrderMetrics, escapeRegex } = require('../utils/derivedMetrics');
 const { PAGINATION, ALLOWED_ORDER_SORT_FIELDS } = require('../config/thresholds');
