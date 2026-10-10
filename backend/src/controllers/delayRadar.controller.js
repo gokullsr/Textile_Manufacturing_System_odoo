@@ -1,7 +1,4 @@
-/**
- * Delay Radar Controller.
- * Exposes explainable deterministic rule-based delay estimates and risk assessments.
- */
+```javascript
 const { ProductionOrder, Machine, FabricRoll } = require('../models');
 const { evaluateOrderRisk } = require('../utils/delayRadarEngine');
 const { FACTORY_TIMEZONE, NON_WORKING_WEEKDAYS, TOLERANCE } = require('../config/radar.config');
@@ -11,15 +8,10 @@ const ORDER_NUMBER_REGEX = /^PO-[A-Z0-9-]+$/i;
 const ALLOWED_RADAR_STATUSES = ['OVERDUE', 'AT_RISK', 'ON_TRACK', 'INSUFFICIENT_DATA', 'COMPLETED'];
 const ALLOWED_SORT_OPTIONS = ['severity', 'dueDate', 'daysLate', 'slackDays', 'orderNumber', 'buyer'];
 
-/**
- * GET /api/delay-radar
- * Returns all active orders with rule-based delay risk assessments, summary KPIs, and assumptions.
- */
 const getRadarAssessments = async (req, res, next) => {
   try {
     const { status, search, sort = 'severity' } = req.query;
 
-    // Validate status query if provided
     let normalizedStatus = null;
     if (status) {
       normalizedStatus = status.trim().toUpperCase();
@@ -33,7 +25,6 @@ const getRadarAssessments = async (req, res, next) => {
       }
     }
 
-    // Validate sort query
     if (sort && !ALLOWED_SORT_OPTIONS.includes(sort)) {
       return res.status(400).json({
         error: {
@@ -43,10 +34,8 @@ const getRadarAssessments = async (req, res, next) => {
       });
     }
 
-    // 1. Fetch active orders (queued, in_progress, on_hold, draft, planned)
     const activeStatuses = ['queued', 'in_progress', 'on_hold', 'draft', 'planned'];
-    
-    // Concurrently fetch active orders, machines, and defect rolls
+
     const [orders, allMachines, defectRolls] = await Promise.all([
       ProductionOrder.find({ status: { $in: activeStatuses } })
         .populate('assignedMachine')
@@ -57,7 +46,6 @@ const getRadarAssessments = async (req, res, next) => {
 
     const now = new Date();
 
-    // Group machines by type and status
     const availableMachinesByType = {};
     allMachines.forEach((m) => {
       if (m.status === 'available') {
@@ -69,7 +57,6 @@ const getRadarAssessments = async (req, res, next) => {
       }
     });
 
-    // Count machine sharing across active orders
     const machineAssignmentCounts = {};
     orders.forEach((o) => {
       if (o.assignedMachine && o.assignedMachine._id) {
@@ -78,7 +65,6 @@ const getRadarAssessments = async (req, res, next) => {
       }
     });
 
-    // Aggregate defect rolls by production order ID
     const rollDefectsByOrder = {};
     defectRolls.forEach((roll) => {
       const orderKey = roll.order ? roll.order.toString() : null;
@@ -91,13 +77,12 @@ const getRadarAssessments = async (req, res, next) => {
       }
     });
 
-    // 2. Evaluate risk for all active orders
     let assessments = orders.map((order) => {
       const orderMachineType = order.assignedMachine?.type || 'loom';
       const availableSameTypeMachines = availableMachinesByType[orderMachineType] || [];
       const mId = order.assignedMachine?._id ? order.assignedMachine._id.toString() : null;
       const sharedCount = mId ? (machineAssignmentCounts[mId] || 0) : 0;
-      
+
       const orderIdStr = order._id ? order._id.toString() : null;
       const defects = orderIdStr ? rollDefectsByOrder[orderIdStr] : null;
 
@@ -108,7 +93,6 @@ const getRadarAssessments = async (req, res, next) => {
       });
     });
 
-    // 3. Compute live summary counts from assessments
     const summary = {
       overdue: assessments.filter((a) => a.status === 'OVERDUE').length,
       atRisk: assessments.filter((a) => a.status === 'AT_RISK').length,
@@ -117,12 +101,10 @@ const getRadarAssessments = async (req, res, next) => {
       total: assessments.length,
     };
 
-    // 4. Apply status filter if requested
     if (normalizedStatus) {
       assessments = assessments.filter((a) => a.status === normalizedStatus);
     }
 
-    // 5. Apply search filter (orderNumber or buyer)
     if (search && search.trim() !== '') {
       const searchTerms = search.trim().toLowerCase();
       assessments = assessments.filter(
@@ -133,7 +115,6 @@ const getRadarAssessments = async (req, res, next) => {
       );
     }
 
-    // 6. Sort assessments: default severity
     assessments.sort((a, b) => {
       if (sort === 'severity') {
         const rank = { OVERDUE: 1, AT_RISK: 2, INSUFFICIENT_DATA: 3, ON_TRACK: 4, COMPLETED: 5 };
@@ -141,11 +122,9 @@ const getRadarAssessments = async (req, res, next) => {
         const rankB = rank[b.status] || 99;
         if (rankA !== rankB) return rankA - rankB;
 
-        // Within AT_RISK: daysLate descending
         if (a.status === 'AT_RISK' && b.status === 'AT_RISK') {
           return (b.daysLate || 0) - (a.daysLate || 0);
         }
-        // Within ON_TRACK: slackDays ascending
         if (a.status === 'ON_TRACK' && b.status === 'ON_TRACK') {
           return (a.slackDays || 0) - (b.slackDays || 0);
         }
@@ -190,10 +169,6 @@ const getRadarAssessments = async (req, res, next) => {
   }
 };
 
-/**
- * GET /api/delay-radar/:orderNumber
- * Returns single order assessment with complete mathematical calculation steps.
- */
 const getOrderRadarAssessment = async (req, res, next) => {
   try {
     const { orderNumber } = req.params;
@@ -224,7 +199,6 @@ const getOrderRadarAssessment = async (req, res, next) => {
 
     const now = new Date();
 
-    // If order is completed, evaluate risk directly (engine returns COMPLETED status)
     if (order.status === 'completed') {
       const assessment = evaluateOrderRisk(order, now);
       return res.status(200).json({
@@ -233,7 +207,6 @@ const getOrderRadarAssessment = async (req, res, next) => {
       });
     }
 
-    // Concurrently fetch available machines and defect rolls
     const orderMachineType = order.assignedMachine?.type || 'loom';
     const [availableMachines, activeSharingOrders, defectRolls] = await Promise.all([
       Machine.find({ type: orderMachineType, status: 'available' }).lean(),
@@ -283,3 +256,4 @@ module.exports = {
   getRadarAssessments,
   getOrderRadarAssessment,
 };
+```
