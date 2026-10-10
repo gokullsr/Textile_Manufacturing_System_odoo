@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import {
@@ -43,7 +44,6 @@ export const Layout = () => {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col md:flex-row font-sans selection:bg-teal-500 selection:text-white">
-      {/* Mobile Top Navbar */}
       <div className="md:hidden flex items-center justify-between px-4 py-3 bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
         <div className="flex items-center gap-2.5">
           <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-teal-600 to-indigo-600 flex items-center justify-center text-white shadow-sm">
@@ -60,13 +60,11 @@ export const Layout = () => {
         </button>
       </div>
 
-      {/* Sidebar Navigation */}
       <aside
         className={`fixed inset-y-0 left-0 z-20 w-64 bg-white border-r border-slate-200 flex flex-col transition-transform duration-200 ease-in-out md:static md:translate-x-0 ${
           mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
-        {/* Brand Header (SaaS badge removed) */}
         <div className="p-6 border-b border-slate-100 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-teal-600 to-indigo-600 flex items-center justify-center text-white shadow-md shadow-teal-600/20">
@@ -81,7 +79,6 @@ export const Layout = () => {
           </div>
         </div>
 
-        {/* Nav Links */}
         <nav className="flex-1 px-3 py-6 space-y-1.5 overflow-y-auto">
           <div className="px-3 pb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
             Operations Menu
@@ -106,7 +103,6 @@ export const Layout = () => {
           ))}
         </nav>
 
-        {/* Plant Status Telemetry Footer */}
         <div className="p-4 border-t border-slate-100 bg-slate-50/80">
           <div className="flex items-center gap-2 text-xs text-slate-600">
             <Activity className="w-4 h-4 text-emerald-600 animate-pulse" />
@@ -116,9 +112,7 @@ export const Layout = () => {
         </div>
       </aside>
 
-      {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        {/* Top Header Bar (MongoDB badge removed) */}
         <header className="hidden md:flex items-center justify-between px-8 py-4 bg-white/90 backdrop-blur-sm border-b border-slate-200 sticky top-0 z-10">
           <div className="flex items-center gap-2 text-sm text-slate-500">
             <span className="font-semibold text-slate-800">LoomIQ</span>
@@ -127,7 +121,6 @@ export const Layout = () => {
           </div>
         </header>
 
-        {/* Page View Container */}
         <main className="flex-1 p-4 md:p-8 max-w-7xl w-full mx-auto overflow-y-auto">
           <Outlet />
         </main>
