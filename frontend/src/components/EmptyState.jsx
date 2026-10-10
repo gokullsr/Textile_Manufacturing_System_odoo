@@ -1,7 +1,8 @@
+
 import React from 'react';
 import { PackageOpen } from 'lucide-react';
 
-export const EmptyState = ({
+const EmptyState = ({
   title = 'No records found',
   description = 'No matching manufacturing records are currently available in the database.',
   icon: Icon = PackageOpen,
@@ -13,7 +14,9 @@ export const EmptyState = ({
         <Icon className="w-8 h-8" />
       </div>
       <h3 className="text-base font-bold text-slate-900">{title}</h3>
-      <p className="text-sm text-slate-600 mt-1 max-w-sm">{description}</p>
+      <p className="text-sm text-slate-600 mt-1 max-w-sm">
+        {description}
+      </p>
       {action && <div className="mt-4">{action}</div>}
     </div>
   );
