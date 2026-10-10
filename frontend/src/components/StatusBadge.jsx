@@ -1,17 +1,12 @@
+
 import React from 'react';
 
-/**
- * Universal StatusBadge component for LoomIQ platform (Light Theme).
- * Supports Order statuses, Delay flags, Machine operational states, Stock alerts,
- * Quality inspection grades, and Dispatch lifecycle states.
- */
 export const StatusBadge = ({ type = 'order', value, className = '' }) => {
   if (!value) return null;
 
   const normalized = String(value).toUpperCase();
 
   const getBadgeConfig = () => {
-    // 1. Quality Inspection Status
     if (type === 'quality' || type === 'qualityStatus') {
       switch (normalized) {
         case 'PASS':
@@ -26,7 +21,6 @@ export const StatusBadge = ({ type = 'order', value, className = '' }) => {
       }
     }
 
-    // 2. Dispatch Lifecycle Status
     if (type === 'dispatch' || type === 'dispatchStatus') {
       switch (normalized) {
         case 'DISPATCHED':
@@ -39,7 +33,6 @@ export const StatusBadge = ({ type = 'order', value, className = '' }) => {
       }
     }
 
-    // 3. Order Statuses
     if (type === 'order') {
       switch (normalized) {
         case 'IN_PROGRESS':
@@ -57,7 +50,6 @@ export const StatusBadge = ({ type = 'order', value, className = '' }) => {
       }
     }
 
-    // 4. Delay & Radar Statuses
     if (type === 'delay' || type === 'radar') {
       switch (normalized) {
         case 'OVERDUE':
@@ -77,7 +69,6 @@ export const StatusBadge = ({ type = 'order', value, className = '' }) => {
       }
     }
 
-    // 5. Machine States
     if (type === 'machine') {
       switch (normalized) {
         case 'RUNNING':
@@ -95,7 +86,6 @@ export const StatusBadge = ({ type = 'order', value, className = '' }) => {
       }
     }
 
-    // 6. Stock Levels
     if (type === 'stock') {
       switch (normalized) {
         case 'OUT':
