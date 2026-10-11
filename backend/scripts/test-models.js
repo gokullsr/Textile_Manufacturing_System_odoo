@@ -4,22 +4,26 @@
  * to verify schema constraints, types, enums, and required fields without writing to DB.
  */
 const mongoose = require('mongoose');
-const { ProductionOrder, Machine, FabricRoll, MaterialStock } = require('../src/models');
+const { ProductionOrder, Machine, FabricRoll, MaterialStock, CorrectiveAction } = require('../src/models');
 
 const testModels = () => {
   console.log('[TEST] Starting Mongoose schema validation check...');
   let hasErrors = false;
+
+  const dummyOrderId = new mongoose.Types.ObjectId();
+  const dummyMachineId = new mongoose.Types.ObjectId();
+  const dummyRollId = new mongoose.Types.ObjectId();
 
   // 1. ProductionOrder validation test
   const testOrder = new ProductionOrder({
     orderNumber: 'PO-2026-0001',
     customer: 'Apex Textiles Ltd.',
     fabricType: '100% Combed Cotton Single Jersey 180 GSM',
-    quantity: 5000,
+    requiredQuantity: 5000,
+    producedQuantity: 1200,
     unit: 'meters',
     dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     status: 'in_progress',
-    currentStage: 'spinning',
     priority: 'high',
     notes: 'Urgent export order for Spring collection',
   });
@@ -38,9 +42,9 @@ const testModels = () => {
     name: 'Picanol OmniPlus Air-Jet Loom #1',
     type: 'loom',
     status: 'running',
-    capacity: 120,
-    capacityUnit: 'meters/hour',
-    currentAssignedOrder: testOrder._id,
+    dailyCapacity: 120,
+    capacityUnit: 'meters',
+    currentAssignedOrder: dummyOrderId,
   });
 
   const machineErr = testMachine.validateSync();
@@ -53,14 +57,30 @@ const testModels = () => {
 
   // 3. FabricRoll validation test
   const testRoll = new FabricRoll({
-    rollId: 'ROLL-2026-0001',
-    productionOrder: testOrder._id,
-    machine: testMachine._id,
-    length: 120.5,
+    rollId: 'FR-2026-000001',
+    order: dummyOrderId,
+    machine: dummyMachineId,
+    quantityMetres: 120.5,
     weight: 24.8,
-    grade: 'A',
-    stage: 'greige',
+    stage: 'GREY',
+    qualityStatus: 'PASS',
+    dispatchStatus: 'NOT_DISPATCHED',
     producedAt: new Date(),
+    inspections: [
+      {
+        stage: 'GREY',
+        result: 'PASS',
+        defects: [{ code: 'BROKEN_END', severity: 'MINOR', quantity: 1 }],
+        defectPoints: 1,
+        pointsPer100m: 0.83,
+        recommendedResult: 'PASS',
+        isOverride: false,
+        machineCode: 'LOOM-A01',
+        defectNotes: 'Minor broken end near selvedge',
+        inspectorName: 'Dev Inspector',
+        inspectedAt: new Date(),
+      },
+    ],
   });
 
   const rollErr = testRoll.validateSync();
@@ -89,11 +109,34 @@ const testModels = () => {
     console.log('✅ MaterialStock schema valid');
   }
 
+  // 5. CorrectiveAction validation test
+  const testCA = new CorrectiveAction({
+    actionNumber: 'CA-2026-0001',
+    title: 'Weft Tension Guide Realignment on LM-02',
+    stage: 'GREY',
+    defectCode: 'WEFT_BAR',
+    machine: dummyMachineId,
+    sourceRoll: dummyRollId,
+    rootCauseCategory: 'MACHINE',
+    description: 'Recalibrate accumulator tension sensor and realign pneumatic nozzles.',
+    owner: 'Ramesh Kumar',
+    dueDate: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000),
+    status: 'IN_PROGRESS',
+  });
+
+  const caErr = testCA.validateSync();
+  if (caErr) {
+    console.error('❌ CorrectiveAction validation failed:', caErr.message);
+    hasErrors = true;
+  } else {
+    console.log('✅ CorrectiveAction schema valid');
+  }
+
   if (hasErrors) {
     console.error('[TEST FAIL] One or more models failed validation.');
     process.exit(1);
   } else {
-    console.log('[TEST PASS] All 4 Mongoose models validated successfully in memory!');
+    console.log('[TEST PASS] All 5 Mongoose models validated successfully in memory!');
     process.exit(0);
   }
 };

@@ -35,7 +35,16 @@ loomiq/
 └── README.md
 ```
 
-## 2. Module 3: Explainable Delay Radar
+## 2. Module 4: Stage Quality Gates & Quality Control Tower
+
+Multi-stage server-enforced quality inspections across `GREY → DYEING → FINISHING → FINAL`, early-detection analytics (FPY, RTY, escape tracking), rule-based alerts, and closed-loop Corrective Action (CAPA) tracking with post-fix recurrence monitoring.
+
+- **Pipeline Gates:** Server-enforced inspection rules over points-per-100m formulas with override reason validation.
+- **Control Tower (`/quality`):** First-Pass Yield by stage, factory-wide Rolled Throughput Yield, defect Pareto, machine hotspots, and active alerts.
+- **Corrective Actions (`/quality/actions`):** Root-cause analysis, lifecycle state management (`OPEN → IN_PROGRESS → DONE → VERIFIED`), and automatic post-fix defect recurrence tracking.
+- **Documentation:** [docs/QUALITY_GATES.md](./docs/QUALITY_GATES.md)
+
+## 3. Module 3: Explainable Delay Radar
 
 Identifies production orders that may miss their delivery deadlines using rule-based calculations.
 

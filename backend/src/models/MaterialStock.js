@@ -5,6 +5,8 @@
 const mongoose = require('mongoose');
 
 const STOCK_UNITS = ['kg', 'meters', 'liters', 'cones', 'bags', 'rolls'];
+const STOCK_CATEGORIES = ['raw_fiber', 'yarn', 'dyes_chemicals', 'packaging', 'auxiliary', 'general'];
+const STOCK_SECTORS = ['spinning', 'weaving', 'dyeing', 'finishing', 'general'];
 
 const materialStockSchema = new mongoose.Schema(
   {
@@ -19,6 +21,24 @@ const materialStockSchema = new mongoose.Schema(
       unique: true,
       trim: true,
       uppercase: true,
+      index: true,
+    },
+    category: {
+      type: String,
+      enum: {
+        values: STOCK_CATEGORIES,
+        message: '{VALUE} is not a valid inventory category',
+      },
+      default: 'general',
+      index: true,
+    },
+    sector: {
+      type: String,
+      enum: {
+        values: STOCK_SECTORS,
+        message: '{VALUE} is not a valid inventory sector',
+      },
+      default: 'general',
       index: true,
     },
     quantityOnHand: {
@@ -46,6 +66,20 @@ const materialStockSchema = new mongoose.Schema(
       type: String,
       trim: true,
       default: '',
+    },
+    isOrdered: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    orderedQuantity: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    lastOrderedAt: {
+      type: Date,
+      default: null,
     },
     isDemo: {
       type: Boolean,

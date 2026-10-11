@@ -227,6 +227,13 @@ const updateOrder = async (req, res, next) => {
       order.status = req.body.status;
     }
 
+    if (req.user) {
+      order.updatedBy = {
+        userId: req.user._id,
+        name: req.user.name,
+      };
+    }
+
     await order.save();
     await order.populate('assignedMachine');
 
@@ -415,4 +422,3 @@ module.exports = {
   createOrder,
   deleteOrder,
 };
-```

@@ -6,7 +6,7 @@ import LoadingState from '../components/LoadingState';
 import ErrorState from '../components/ErrorState';
 import EmptyState from '../components/EmptyState';
 import { formatNumber, formatDate } from '../utils/formatters';
-import { QrCode, Plus, Search, Filter, RefreshCw, ChevronLeft, ChevronRight, Eye } from 'lucide-react';
+import { QrCode, Plus, Search, Filter, RefreshCw, ChevronLeft, ChevronRight, Eye, ShieldCheck, Clock } from 'lucide-react';
 
 export const Rolls = () => {
   const [rolls, setRolls] = useState([]);
@@ -16,8 +16,10 @@ export const Rolls = () => {
 
   // Filter states
   const [searchTerm, setSearchTerm] = useState('');
+  const [stageFilter, setStageFilter] = useState('');
   const [qualityFilter, setQualityFilter] = useState('');
   const [dispatchFilter, setDispatchFilter] = useState('');
+  const [awaitingFilter, setAwaitingFilter] = useState(false);
   const [page, setPage] = useState(1);
 
   const fetchRollsList = useCallback(async () => {
@@ -26,8 +28,10 @@ export const Rolls = () => {
     try {
       const res = await getRolls({
         search: searchTerm,
+        stage: stageFilter,
         qualityStatus: qualityFilter,
         dispatchStatus: dispatchFilter,
+        awaitingInspection: awaitingFilter ? 'true' : undefined,
         page,
         limit: 15,
       });
@@ -38,7 +42,7 @@ export const Rolls = () => {
     } finally {
       setLoading(false);
     }
-  }, [searchTerm, qualityFilter, dispatchFilter, page]);
+  }, [searchTerm, stageFilter, qualityFilter, dispatchFilter, awaitingFilter, page]);
 
   useEffect(() => {
     fetchRollsList();
@@ -49,10 +53,10 @@ export const Rolls = () => {
       {/* Header Banner */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200/90 shadow-sm">
         <div>
-          <span className="text-xs font-bold uppercase tracking-widest text-teal-600">Module 2: Traceability</span>
+          <span className="text-xs font-bold uppercase tracking-widest text-teal-600">Module 4: Stage Quality Gates</span>
           <h1 className="text-2xl font-bold text-slate-900 tracking-tight mt-1">Fabric Roll Digital Passports</h1>
           <p className="text-sm text-slate-600 mt-0.5">
-            QR digital identity registry for physical fabric rolls, quality inspection history, and dispatch gating.
+            End-to-end QR passports tracking multi-stage quality gates, defect scoring, and dispatch certifications.
           </p>
         </div>
 
@@ -94,11 +98,26 @@ export const Rolls = () => {
         </div>
 
         {/* Filters */}
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2.5">
           <div className="flex items-center gap-1.5 text-xs text-slate-500 font-medium">
             <Filter className="w-3.5 h-3.5" />
             <span>Filters:</span>
           </div>
+
+          <select
+            value={stageFilter}
+            onChange={(e) => {
+              setStageFilter(e.target.value);
+              setPage(1);
+            }}
+            className="bg-slate-50 border border-slate-300 rounded-xl px-3 py-1.5 text-xs font-medium text-slate-700 focus:outline-none focus:border-teal-500"
+          >
+            <option value="">All Production Stages</option>
+            <option value="GREY">1. Grey Weave</option>
+            <option value="DYEING">2. Dyeing</option>
+            <option value="FINISHING">3. Finishing</option>
+            <option value="FINAL">4. Final QC</option>
+          </select>
 
           <select
             value={qualityFilter}
@@ -106,9 +125,9 @@ export const Rolls = () => {
               setQualityFilter(e.target.value);
               setPage(1);
             }}
-            className="bg-slate-50 border border-slate-300 rounded-xl px-3 py-1.5 text-xs text-slate-700 focus:outline-none focus:border-teal-500"
+            className="bg-slate-50 border border-slate-300 rounded-xl px-3 py-1.5 text-xs font-medium text-slate-700 focus:outline-none focus:border-teal-500"
           >
-            <option value="">All Quality Grades</option>
+            <option value="">All Gate Statuses</option>
             <option value="PASS">PASS</option>
             <option value="PENDING">PENDING</option>
             <option value="REWORK">REWORK</option>
@@ -121,13 +140,29 @@ export const Rolls = () => {
               setDispatchFilter(e.target.value);
               setPage(1);
             }}
-            className="bg-slate-50 border border-slate-300 rounded-xl px-3 py-1.5 text-xs text-slate-700 focus:outline-none focus:border-teal-500"
+            className="bg-slate-50 border border-slate-300 rounded-xl px-3 py-1.5 text-xs font-medium text-slate-700 focus:outline-none focus:border-teal-500"
           >
             <option value="">All Dispatch States</option>
             <option value="NOT_DISPATCHED">Not Dispatched</option>
             <option value="READY_FOR_DISPATCH">Ready for Dispatch</option>
             <option value="DISPATCHED">Dispatched</option>
           </select>
+
+          <button
+            type="button"
+            onClick={() => {
+              setAwaitingFilter((prev) => !prev);
+              setPage(1);
+            }}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all flex items-center gap-1.5 ${
+              awaitingFilter
+                ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
+                : 'bg-slate-50 text-slate-700 border-slate-300 hover:bg-slate-100'
+            }`}
+          >
+            <Clock className="w-3.5 h-3.5" />
+            <span>Awaiting QC</span>
+          </button>
         </div>
       </div>
 
@@ -139,7 +174,7 @@ export const Rolls = () => {
       ) : rolls.length === 0 ? (
         <EmptyState
           title="No fabric rolls found"
-          description="No rolls match the selected filters or search terms."
+          description="No rolls match the selected stage, quality gate, or search terms."
           icon={QrCode}
           action={
             <Link
@@ -160,11 +195,11 @@ export const Rolls = () => {
                 <tr className="border-b border-slate-200 bg-slate-50 text-slate-600 uppercase font-bold tracking-wider">
                   <th className="py-3.5 px-4">Roll ID (QR)</th>
                   <th className="py-3.5 px-4">Production Order</th>
+                  <th className="py-3.5 px-4">Current Stage</th>
                   <th className="py-3.5 px-4">Machine</th>
                   <th className="py-3.5 px-4">Quantity (m)</th>
-                  <th className="py-3.5 px-4">Quality Status</th>
-                  <th className="py-3.5 px-4">Dispatch Status</th>
-                  <th className="py-3.5 px-4">Last Inspected</th>
+                  <th className="py-3.5 px-4">Gate Status</th>
+                  <th className="py-3.5 px-4">Dispatch</th>
                   <th className="py-3.5 px-4 text-right">Action</th>
                 </tr>
               </thead>
@@ -197,6 +232,10 @@ export const Rolls = () => {
                       )}
                     </td>
 
+                    <td className="py-3.5 px-4">
+                      <StatusBadge type="stage" value={roll.stage || 'GREY'} />
+                    </td>
+
                     <td className="py-3.5 px-4 font-mono text-slate-700">
                       {roll.machine?.machineCode || roll.machine?.code || '—'}
                     </td>
@@ -211,10 +250,6 @@ export const Rolls = () => {
 
                     <td className="py-3.5 px-4">
                       <StatusBadge type="dispatch" value={roll.dispatchStatus} />
-                    </td>
-
-                    <td className="py-3.5 px-4 text-slate-500">
-                      {roll.inspectedAt ? formatDate(roll.inspectedAt) : 'Pending inspection'}
                     </td>
 
                     <td className="py-3.5 px-4 text-right">
@@ -245,7 +280,10 @@ export const Rolls = () => {
                     <QrCode className="w-4 h-4 text-teal-600" />
                     <span className="font-mono font-bold text-slate-900 text-sm">{roll.rollId}</span>
                   </div>
-                  <StatusBadge type="quality" value={roll.qualityStatus} />
+                  <div className="flex items-center gap-1.5">
+                    <StatusBadge type="stage" value={roll.stage || 'GREY'} />
+                    <StatusBadge type="quality" value={roll.qualityStatus} />
+                  </div>
                 </div>
 
                 <div className="text-xs text-slate-600">
@@ -260,7 +298,7 @@ export const Rolls = () => {
                   </div>
                   <div>
                     <span className="text-slate-500 block">Machine:</span>
-                    <strong className="font-mono text-teal-700">{roll.machine?.machineCode || roll.machine?.code}</strong>
+                    <strong className="font-mono text-teal-700">{roll.machine?.machineCode || roll.machine?.code || '—'}</strong>
                   </div>
                 </div>
 

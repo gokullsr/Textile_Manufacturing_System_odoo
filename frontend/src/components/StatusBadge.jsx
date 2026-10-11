@@ -1,12 +1,18 @@
 
 import React from 'react';
 
+/**
+ * Universal StatusBadge component for LoomIQ platform (Light Theme).
+ * Supports Order statuses, Delay flags, Machine operational states, Stock alerts,
+ * Quality inspection grades, Quality stages, CAPA statuses, and Dispatch lifecycle states.
+ */
 export const StatusBadge = ({ type = 'order', value, className = '' }) => {
   if (!value) return null;
 
   const normalized = String(value).toUpperCase();
 
   const getBadgeConfig = () => {
+    // 1. Quality Inspection Status / Verdict
     if (type === 'quality' || type === 'qualityStatus') {
       switch (normalized) {
         case 'PASS':
@@ -21,6 +27,56 @@ export const StatusBadge = ({ type = 'order', value, className = '' }) => {
       }
     }
 
+    // 2. Stage Badges (GREY, DYEING, FINISHING, FINAL)
+    if (type === 'stage') {
+      switch (normalized) {
+        case 'GREY':
+          return { label: '1. Grey Weave', bg: 'bg-slate-100', text: 'text-slate-800', border: 'border-slate-300', dot: 'bg-slate-500' };
+        case 'DYEING':
+          return { label: '2. Dyeing', bg: 'bg-indigo-50', text: 'text-indigo-700', border: 'border-indigo-200', dot: 'bg-indigo-500' };
+        case 'FINISHING':
+          return { label: '3. Finishing', bg: 'bg-purple-50', text: 'text-purple-700', border: 'border-purple-200', dot: 'bg-purple-500' };
+        case 'FINAL':
+          return { label: '4. Final QC', bg: 'bg-teal-50', text: 'text-teal-700', border: 'border-teal-200', dot: 'bg-teal-500' };
+        default:
+          return { label: value, bg: 'bg-slate-100', text: 'text-slate-700', border: 'border-slate-200', dot: 'bg-slate-400' };
+      }
+    }
+
+    // 3. Corrective Action (CAPA) Statuses
+    if (type === 'actionStatus' || type === 'caStatus') {
+      switch (normalized) {
+        case 'OPEN':
+          return { label: 'Open', bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200', dot: 'bg-amber-500 animate-pulse' };
+        case 'IN_PROGRESS':
+          return { label: 'In Progress', bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200', dot: 'bg-blue-500' };
+        case 'DONE':
+          return { label: 'Done (Pending Verification)', bg: 'bg-indigo-50', text: 'text-indigo-700', border: 'border-indigo-200', dot: 'bg-indigo-500' };
+        case 'VERIFIED':
+          return { label: 'Verified & Closed', bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200', dot: 'bg-emerald-500' };
+        default:
+          return { label: value, bg: 'bg-slate-100', text: 'text-slate-700', border: 'border-slate-200', dot: 'bg-slate-400' };
+      }
+    }
+
+    // 4. Alert Severity
+    if (type === 'severity') {
+      switch (normalized) {
+        case 'CRITICAL':
+          return { label: 'CRITICAL', bg: 'bg-rose-50', text: 'text-rose-700', border: 'border-rose-200', dot: 'bg-rose-500 animate-ping' };
+        case 'WARN':
+        case 'WARNING':
+          return { label: 'WARNING', bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200', dot: 'bg-amber-500' };
+        case 'MINOR':
+          return { label: 'MINOR', bg: 'bg-slate-100', text: 'text-slate-700', border: 'border-slate-200', dot: 'bg-slate-400' };
+        case 'MAJOR':
+          return { label: 'MAJOR', bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200', dot: 'bg-amber-500' };
+        default:
+          return { label: value, bg: 'bg-slate-100', text: 'text-slate-700', border: 'border-slate-200', dot: 'bg-slate-400' };
+      }
+    }
+
+    // 5. Dispatch Lifecycle Status
     if (type === 'dispatch' || type === 'dispatchStatus') {
       switch (normalized) {
         case 'DISPATCHED':
@@ -33,6 +89,7 @@ export const StatusBadge = ({ type = 'order', value, className = '' }) => {
       }
     }
 
+    // 6. Order Statuses
     if (type === 'order') {
       switch (normalized) {
         case 'IN_PROGRESS':
@@ -50,6 +107,7 @@ export const StatusBadge = ({ type = 'order', value, className = '' }) => {
       }
     }
 
+    // 7. Delay & Radar Statuses
     if (type === 'delay' || type === 'radar') {
       switch (normalized) {
         case 'OVERDUE':
@@ -69,6 +127,7 @@ export const StatusBadge = ({ type = 'order', value, className = '' }) => {
       }
     }
 
+    // 8. Machine States
     if (type === 'machine') {
       switch (normalized) {
         case 'RUNNING':
@@ -86,6 +145,7 @@ export const StatusBadge = ({ type = 'order', value, className = '' }) => {
       }
     }
 
+    // 9. Stock Levels
     if (type === 'stock') {
       switch (normalized) {
         case 'OUT':

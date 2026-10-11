@@ -1,22 +1,28 @@
 /**
- * Idempotent Seed Script for LoomIQ Platform.
- * Populates realistic textile manufacturing dataset including Fabric Rolls with QR digital passports.
+ * Idempotent Seed Script for LoomIQ Platform (Modules 1, 2, 3, 4A, 4B, 4C).
+ * Populates realistic textile manufacturing dataset including Stage Quality Gates,
+ * Quality Control Tower alerts, escapes, hotspots, and CAPA corrective actions.
  * Supports safe '--reset' flag to recreate only demo records without touching user data.
  */
 const path = require('path');
 const dotenv = require('dotenv');
 
-// Load environment variables
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 const config = require('../src/config/env');
 const { connectDB, disconnectDB } = require('../src/config/db');
-const { ProductionOrder, Machine, MaterialStock, FabricRoll, Counter } = require('../src/models');
+const {
+  ProductionOrder,
+  Machine,
+  MaterialStock,
+  FabricRoll,
+  Counter,
+  CorrectiveAction,
+} = require('../src/models');
 
 const isReset = process.argv.includes('--reset');
 
 const seed = async () => {
-  // 1. Guard against running in production
   if (process.env.NODE_ENV === 'production' || config.nodeEnv === 'production') {
     console.error('⛔ [SAFETY LOCK] Seeding is prohibited in production environments.');
     process.exit(1);
@@ -26,29 +32,24 @@ const seed = async () => {
   await connectDB(config.mongoUri);
 
   try {
-    // 2. Safe reset if requested (only deletes isDemo: true records)
     if (isReset) {
       console.log('🧹 Flag --reset detected: Cleaning up previous demo records...');
       const delOrders = await ProductionOrder.deleteMany({ isDemo: true });
       const delMachines = await Machine.deleteMany({ isDemo: true });
       const delStock = await MaterialStock.deleteMany({ isDemo: true });
       const delRolls = await FabricRoll.deleteMany({ isDemo: true });
+      const delCAs = await CorrectiveAction.deleteMany({ isDemo: true });
       await Counter.deleteMany({});
-      console.log(`   Removed: ${delOrders.deletedCount} orders, ${delMachines.deletedCount} machines, ${delStock.deletedCount} stock items, ${delRolls.deletedCount} fabric rolls.`);
+      console.log(`   Removed: ${delOrders.deletedCount} orders, ${delMachines.deletedCount} machines, ${delStock.deletedCount} stock items, ${delRolls.deletedCount} rolls, ${delCAs.deletedCount} CAs.`);
     }
 
     const now = new Date();
     const day = 24 * 60 * 60 * 1000;
+    const hour = 60 * 60 * 1000;
 
     // ----------------------------------------------------
-    // 3. SEED MACHINES (with dailyCapacity convention)
+    // 1. SEED MACHINES
     // ----------------------------------------------------
-    // Check if any existing machines lack dailyCapacity
-    const existingWithoutDailyCap = await Machine.countDocuments({ isDemo: true, dailyCapacity: { $exists: false } });
-    if (existingWithoutDailyCap > 0) {
-      console.warn(`⚠️ [NOTICE] Found ${existingWithoutDailyCap} legacy demo machine(s) lacking 'dailyCapacity'. Run with --reset to migrate.`);
-    }
-
     const machineDefs = [
       { code: 'LM-01', name: 'Air-Jet Loom Alpha 1', type: 'loom', status: 'running', dailyCapacity: 600, capacity: 600, capacityUnit: 'meters', isDemo: true },
       { code: 'LM-02', name: 'Air-Jet Loom Alpha 2', type: 'loom', status: 'running', dailyCapacity: 500, capacity: 500, capacityUnit: 'meters', isDemo: true },
@@ -56,8 +57,8 @@ const seed = async () => {
       { code: 'LM-04', name: 'Rapier Loom Beta 2', type: 'loom', status: 'available', dailyCapacity: 500, capacity: 500, capacityUnit: 'meters', isDemo: true },
       { code: 'KN-01', name: 'Circular Knit Station 1', type: 'knitting_machine', status: 'available', dailyCapacity: 350, capacity: 350, capacityUnit: 'meters', isDemo: true },
       { code: 'KN-02', name: 'Flatbed Knit Station 2', type: 'knitting_machine', status: 'available', dailyCapacity: 300, capacity: 300, capacityUnit: 'meters', isDemo: true },
-      { code: 'DY-01', name: 'High-Temp Jet Dyeing Vat', type: 'dyeing_vat', status: 'maintenance', dailyCapacity: 800, capacity: 800, capacityUnit: 'kg', isDemo: true },
-      { code: 'FN-01', name: 'Stenter Finishing Range', type: 'finishing_range', status: 'maintenance', dailyCapacity: 700, capacity: 700, capacityUnit: 'meters', isDemo: true },
+      { code: 'DY-01', name: 'High-Temp Jet Dyeing Vat', type: 'dyeing_vat', status: 'running', dailyCapacity: 800, capacity: 800, capacityUnit: 'kg', isDemo: true },
+      { code: 'FN-01', name: 'Stenter Finishing Range', type: 'finishing_range', status: 'running', dailyCapacity: 700, capacity: 700, capacityUnit: 'meters', isDemo: true },
     ];
 
     let machinesInserted = 0;
@@ -77,11 +78,10 @@ const seed = async () => {
       }
       machineMap[m.code] = res.value || (await Machine.findOne({ code: m.code }));
     }
-
     console.log(`🏭 Machines: ${machinesInserted} created, ${machinesExisted} existing.`);
 
     // ----------------------------------------------------
-    // 4. SEED MATERIAL STOCK
+    // 2. SEED MATERIAL STOCK
     // ----------------------------------------------------
     const stockDefs = [
       { sku: 'DYE-IND-01', name: 'Indigo Reactive Dye Blue 5R', quantityOnHand: 0, unit: 'kg', reorderLevel: 150, supplier: 'ColorChem Synthetics', isDemo: true },
@@ -111,36 +111,23 @@ const seed = async () => {
         stockInserted++;
       }
     }
-
     console.log(`📦 Material Stock: ${stockInserted} created, ${stockExisted} existing.`);
 
     // ----------------------------------------------------
-    // 5. SEED PRODUCTION ORDERS (Designed for Delay Radar Scenarios)
+    // 3. SEED PRODUCTION ORDERS
     // ----------------------------------------------------
     const orderDefs = [
-      // 1. ON_TRACK (Slack ~6.5 days >= 2 days)
       { orderNumber: 'PO-2026-0001', customer: 'Meridian Apparel Co.', fabricType: '100% Combed Cotton Single Jersey 180 GSM', requiredQuantity: 6000, producedQuantity: 3600, unit: 'meters', startDate: new Date(now.getTime() - 10 * day), dueDate: new Date(now.getTime() + 10 * day), status: 'in_progress', currentStage: 'weaving', priority: 'high', assignedMachine: machineMap['LM-01']?._id, notes: 'Export grade fabric for Summer Casuals collection.', isDemo: true },
-      // 2. ON_TRACK (Uses productionRatePerDay override of 800 m/day vs 500 machine capacity)
       { orderNumber: 'PO-2026-0002', customer: 'Aura Fashion Group', fabricType: '98/2 Cotton Spandex Twill Denim 11.5 Oz', requiredQuantity: 8000, producedQuantity: 5600, unit: 'meters', productionRatePerDay: 800, startDate: new Date(now.getTime() - 14 * day), dueDate: new Date(now.getTime() + 8 * day), status: 'in_progress', currentStage: 'weaving', priority: 'urgent', assignedMachine: machineMap['LM-02']?._id, notes: 'Fast-track denim line running with speed override.', isDemo: true },
-      // 3. AT_RISK (Rescuable by available LM-04 loom)
       { orderNumber: 'PO-2026-0003', customer: 'Cascade Sportswear', fabricType: '100% Polyester Quick-Dry Birdseye Mesh', requiredQuantity: 4500, producedQuantity: 1500, unit: 'meters', startDate: new Date(now.getTime() - 4 * day), dueDate: new Date(now.getTime() + 4 * day), status: 'in_progress', currentStage: 'weaving', priority: 'medium', assignedMachine: machineMap['LM-03']?._id, notes: 'Antimicrobial and UV coating specification. Needs rescue loom.', isDemo: true },
-      // 4. INSUFFICIENT_DATA (In-progress order with NO assigned machine and no override)
       { orderNumber: 'PO-2026-0004', customer: 'Loom & Linen Corp.', fabricType: '60/40 Linen Cotton Plain Weave 160 GSM', requiredQuantity: 3000, producedQuantity: 1200, unit: 'meters', startDate: new Date(now.getTime() - 5 * day), dueDate: new Date(now.getTime() + 15 * day), status: 'in_progress', currentStage: 'weaving', priority: 'low', assignedMachine: null, notes: 'Awaiting loom workcenter assignment.', isDemo: true },
-      // 5. COMPLETED
       { orderNumber: 'PO-2026-0005', customer: 'Vanguard Uniforms Ltd.', fabricType: '65/35 Poly-Cotton Heavy Drill 240 GSM', requiredQuantity: 5000, producedQuantity: 5000, unit: 'meters', startDate: new Date(now.getTime() - 20 * day), dueDate: new Date(now.getTime() - 2 * day), status: 'completed', currentStage: 'dispatched', priority: 'high', assignedMachine: null, notes: 'Quality inspection passed grade A. Shipped on schedule.', isDemo: true },
-      // 6. COMPLETED
       { orderNumber: 'PO-2026-0006', customer: 'Meridian Apparel Co.', fabricType: '100% Cotton Poplin Solid Dyed 120 GSM', requiredQuantity: 4000, producedQuantity: 4000, unit: 'meters', startDate: new Date(now.getTime() - 15 * day), dueDate: new Date(now.getTime() - 1 * day), status: 'completed', currentStage: 'dispatched', priority: 'medium', assignedMachine: null, notes: 'Dispatched to central warehouse.', isDemo: true },
-      // 7. COMPLETED
       { orderNumber: 'PO-2026-0007', customer: 'Nordic Knitwear Co.', fabricType: '100% Viscose Rib Knit 220 GSM', requiredQuantity: 2500, producedQuantity: 2500, unit: 'meters', startDate: new Date(now.getTime() - 12 * day), dueDate: new Date(now.getTime() - 3 * day), status: 'completed', currentStage: 'dispatched', priority: 'low', assignedMachine: null, notes: 'Fabric rolls packaged with moisture barrier.', isDemo: true },
-      // 8. AT_RISK (Not Rescuable, machine in maintenance, unit kg)
       { orderNumber: 'PO-2026-0008', customer: 'Aura Fashion Group', fabricType: '100% Rayon Challis Botanical Print Yarn', requiredQuantity: 5000, producedQuantity: 1000, unit: 'kg', startDate: new Date(now.getTime() - 9 * day), dueDate: new Date(now.getTime() + 2 * day), status: 'in_progress', currentStage: 'dyeing', priority: 'urgent', assignedMachine: machineMap['DY-01']?._id, notes: 'Dyeing vat undergoing valve maintenance.', isDemo: true },
-      // 9. ON_TRACK (On hold, shares machine LM-01 with PO-2026-0001)
       { orderNumber: 'PO-2026-0009', customer: 'Vanguard Uniforms Ltd.', fabricType: '100% Nylon Oxford Waterproof 210D', requiredQuantity: 3500, producedQuantity: 2000, unit: 'meters', startDate: new Date(now.getTime() - 10 * day), dueDate: new Date(now.getTime() + 12 * day), status: 'on_hold', currentStage: 'finishing', priority: 'high', assignedMachine: machineMap['LM-01']?._id, notes: 'On hold awaiting buyer lab dip shade approval.', isDemo: true },
-      // 10. OVERDUE (Past deadline)
       { orderNumber: 'PO-2026-0010', customer: 'Cascade Sportswear', fabricType: '88/12 Poly-Spandex Interlock 260 GSM', requiredQuantity: 4000, producedQuantity: 2800, unit: 'meters', startDate: new Date(now.getTime() - 15 * day), dueDate: new Date(now.getTime() - 3 * day), status: 'in_progress', currentStage: 'quality_inspection', priority: 'urgent', assignedMachine: machineMap['LM-02']?._id, notes: 'Overdue order. Finishing station bottleneck resolved.', isDemo: true },
-      // 11. OVERDUE (Past deadline)
       { orderNumber: 'PO-2026-0011', customer: 'Apex Textiles Ltd.', fabricType: '100% Combed Cotton Oxford 150 GSM', requiredQuantity: 6500, producedQuantity: 4200, unit: 'meters', startDate: new Date(now.getTime() - 14 * day), dueDate: new Date(now.getTime() - 1 * day), status: 'in_progress', currentStage: 'finishing', priority: 'high', assignedMachine: machineMap['LM-03']?._id, notes: 'Expedited transport booked to mitigate delivery delay.', isDemo: true },
-      // 12. ON_TRACK (Queued status with defect rolls)
       { orderNumber: 'PO-2026-0012', customer: 'Loom & Linen Corp.', fabricType: '55/45 Cotton Poly Slub Yarn Fabric', requiredQuantity: 7000, producedQuantity: 2000, unit: 'meters', startDate: new Date(now.getTime() + 1 * day), dueDate: new Date(now.getTime() + 20 * day), status: 'queued', currentStage: 'spinning', priority: 'medium', assignedMachine: machineMap['LM-02']?._id, notes: 'Yarn allocated in warehouse. Awaiting loom start.', isDemo: true },
     ];
 
@@ -170,316 +157,983 @@ const seed = async () => {
         }
       }
     }
-
     console.log(`📋 Production Orders: ${ordersInserted} created, ${ordersExisted} existing.`);
 
     // ----------------------------------------------------
-    // 6. SEED FABRIC ROLLS (14 rolls with realistic passport data)
+    // 4. SEED FABRIC ROLLS (24 rolls covering all Module 4 requirements)
     // ----------------------------------------------------
     const rollDefs = [
-      // 1. PENDING (Fresh off loom)
+      // 1. GREY - PENDING (Fresh off loom)
       {
         rollId: 'FR-2026-000001',
         order: orderMap['PO-2026-0001']?._id,
         machine: machineMap['LM-01']?._id,
         quantityMetres: 120.5,
         weight: 24.2,
-        stage: 'weaving',
+        stage: 'GREY',
+        stageEnteredAt: new Date(now.getTime() - 2 * hour),
+        stageHistory: [{ stage: 'GREY', machineCode: 'LM-01', enteredAt: new Date(now.getTime() - 2 * hour), exitedAt: null }],
         qualityStatus: 'PENDING',
         defectNotes: '',
         inspectedAt: null,
         dispatchStatus: 'NOT_DISPATCHED',
-        dispatchedAt: null,
         inspections: [],
         isDemo: true,
       },
-      // 2. PENDING (Fresh off knitting station)
+      // 2. GREY - OVERDUE INSPECTION (Breaches 4h SLA, entered 6h ago)
       {
         rollId: 'FR-2026-000002',
         order: orderMap['PO-2026-0001']?._id,
         machine: machineMap['LM-01']?._id,
         quantityMetres: 118.0,
         weight: 23.8,
-        stage: 'weaving',
+        stage: 'GREY',
+        stageEnteredAt: new Date(now.getTime() - 6 * hour),
+        stageHistory: [{ stage: 'GREY', machineCode: 'LM-01', enteredAt: new Date(now.getTime() - 6 * hour), exitedAt: null }],
         qualityStatus: 'PENDING',
         defectNotes: '',
         inspectedAt: null,
         dispatchStatus: 'NOT_DISPATCHED',
-        dispatchedAt: null,
         inspections: [],
         isDemo: true,
       },
-      // 3. PENDING
+      // 3. GREY - PASS (Healthy machine LM-01)
       {
         rollId: 'FR-2026-000003',
-        order: orderMap['PO-2026-0002']?._id,
-        machine: machineMap['LM-02']?._id,
-        quantityMetres: 240.0,
-        weight: 48.0,
-        stage: 'weaving',
-        qualityStatus: 'PENDING',
-        defectNotes: '',
-        inspectedAt: null,
-        dispatchStatus: 'NOT_DISPATCHED',
-        dispatchedAt: null,
-        inspections: [],
-        isDemo: true,
-      },
-      // 4. PASS (Not dispatched)
-      {
-        rollId: 'FR-2026-000004',
         order: orderMap['PO-2026-0001']?._id,
         machine: machineMap['LM-01']?._id,
         quantityMetres: 125.0,
         weight: 25.1,
-        stage: 'inspected',
+        stage: 'GREY',
+        stageEnteredAt: new Date(now.getTime() - 1 * day),
+        stageHistory: [{ stage: 'GREY', machineCode: 'LM-01', enteredAt: new Date(now.getTime() - 1 * day), exitedAt: null }],
         qualityStatus: 'PASS',
-        defectNotes: 'Clear weave pattern, zero yarn slubs, uniform tension.',
-        inspectedAt: new Date(now.getTime() - 2 * day),
+        defectNotes: 'Minor broken end within tolerance.',
+        inspectedAt: new Date(now.getTime() - 1 * day + 1 * hour),
         dispatchStatus: 'NOT_DISPATCHED',
-        dispatchedAt: null,
         inspections: [
           {
+            stage: 'GREY',
             result: 'PASS',
-            defectNotes: 'Clear weave pattern, zero yarn slubs, uniform tension.',
+            defects: [{ code: 'BROKEN_END', severity: 'MINOR', quantity: 2 }],
+            defectPoints: 2,
+            pointsPer100m: 1.6,
+            recommendedResult: 'PASS',
+            isOverride: false,
+            machineCode: 'LM-01',
+            defectNotes: 'Minor broken end within tolerance.',
             inspectorName: 'Devon Vance (QA Lead)',
+            inspectedAt: new Date(now.getTime() - 1 * day + 1 * hour),
+          },
+        ],
+        isDemo: true,
+      },
+      // 4. GREY -> REJECT (Caught at GREY: Critical hole defect)
+      {
+        rollId: 'FR-2026-000004',
+        order: orderMap['PO-2026-0002']?._id,
+        machine: machineMap['LM-02']?._id,
+        quantityMetres: 100.0,
+        weight: 20.0,
+        stage: 'GREY',
+        stageEnteredAt: new Date(now.getTime() - 2 * day),
+        stageHistory: [{ stage: 'GREY', machineCode: 'LM-02', enteredAt: new Date(now.getTime() - 2 * day), exitedAt: null }],
+        qualityStatus: 'REJECT',
+        defectNotes: 'Large continuous hole from shuttle smash. Fabric scrap.',
+        inspectedAt: new Date(now.getTime() - 2 * day + 2 * hour),
+        dispatchStatus: 'NOT_DISPATCHED',
+        inspections: [
+          {
+            stage: 'GREY',
+            result: 'REJECT',
+            defects: [{ code: 'HOLE', severity: 'CRITICAL', quantity: 1 }],
+            defectPoints: 5,
+            pointsPer100m: 5.0,
+            recommendedResult: 'REJECT',
+            isOverride: false,
+            machineCode: 'LM-02',
+            defectNotes: 'Large continuous hole from shuttle smash. Fabric scrap.',
+            inspectorName: 'Sarah Lin (Senior QA)',
+            inspectedAt: new Date(now.getTime() - 2 * day + 2 * hour),
+          },
+        ],
+        isDemo: true,
+      },
+      // 5. LM-02 Hotspot sample 1: REWORK (Weft bar defect)
+      {
+        rollId: 'FR-2026-000005',
+        order: orderMap['PO-2026-0002']?._id,
+        machine: machineMap['LM-02']?._id,
+        quantityMetres: 100.0,
+        weight: 20.5,
+        stage: 'GREY',
+        stageEnteredAt: new Date(now.getTime() - 3 * day),
+        stageHistory: [{ stage: 'GREY', machineCode: 'LM-02', enteredAt: new Date(now.getTime() - 3 * day), exitedAt: null }],
+        qualityStatus: 'REWORK',
+        defectNotes: 'Multiple weft bars across middle 30m.',
+        inspectedAt: new Date(now.getTime() - 3 * day + 2 * hour),
+        dispatchStatus: 'NOT_DISPATCHED',
+        inspections: [
+          {
+            stage: 'GREY',
+            result: 'REWORK',
+            defects: [{ code: 'WEFT_BAR', severity: 'MAJOR', quantity: 8 }],
+            defectPoints: 24,
+            pointsPer100m: 24.0,
+            recommendedResult: 'REWORK',
+            isOverride: false,
+            machineCode: 'LM-02',
+            defectNotes: 'Multiple weft bars across middle 30m.',
+            inspectorName: 'Sarah Lin (Senior QA)',
+            inspectedAt: new Date(now.getTime() - 3 * day + 2 * hour),
+          },
+        ],
+        isDemo: true,
+      },
+      // 6. LM-02 Hotspot sample 2: REWORK (Weft bar defect)
+      {
+        rollId: 'FR-2026-000006',
+        order: orderMap['PO-2026-0002']?._id,
+        machine: machineMap['LM-02']?._id,
+        quantityMetres: 100.0,
+        weight: 21.0,
+        stage: 'GREY',
+        stageEnteredAt: new Date(now.getTime() - 4 * day),
+        stageHistory: [{ stage: 'GREY', machineCode: 'LM-02', enteredAt: new Date(now.getTime() - 4 * day), exitedAt: null }],
+        qualityStatus: 'REWORK',
+        defectNotes: 'Persistent weft bar banding.',
+        inspectedAt: new Date(now.getTime() - 4 * day + 1 * hour),
+        dispatchStatus: 'NOT_DISPATCHED',
+        inspections: [
+          {
+            stage: 'GREY',
+            result: 'REWORK',
+            defects: [{ code: 'WEFT_BAR', severity: 'MAJOR', quantity: 9 }],
+            defectPoints: 27,
+            pointsPer100m: 27.0,
+            recommendedResult: 'REWORK',
+            isOverride: false,
+            machineCode: 'LM-02',
+            defectNotes: 'Persistent weft bar banding.',
+            inspectorName: 'Marcus Cole',
+            inspectedAt: new Date(now.getTime() - 4 * day + 1 * hour),
+          },
+        ],
+        isDemo: true,
+      },
+      // 7. LM-02 Hotspot sample 3: REWORK (Weft bar defect -> Recurrence Alert!)
+      {
+        rollId: 'FR-2026-000007',
+        order: orderMap['PO-2026-0002']?._id,
+        machine: machineMap['LM-02']?._id,
+        quantityMetres: 100.0,
+        weight: 20.0,
+        stage: 'GREY',
+        stageEnteredAt: new Date(now.getTime() - 5 * day),
+        stageHistory: [{ stage: 'GREY', machineCode: 'LM-02', enteredAt: new Date(now.getTime() - 5 * day), exitedAt: null }],
+        qualityStatus: 'REWORK',
+        defectNotes: 'Weft bar recurrence on LM-02.',
+        inspectedAt: new Date(now.getTime() - 5 * day + 1 * hour),
+        dispatchStatus: 'NOT_DISPATCHED',
+        inspections: [
+          {
+            stage: 'GREY',
+            result: 'REWORK',
+            defects: [{ code: 'WEFT_BAR', severity: 'MAJOR', quantity: 8 }],
+            defectPoints: 24,
+            pointsPer100m: 24.0,
+            recommendedResult: 'REWORK',
+            isOverride: false,
+            machineCode: 'LM-02',
+            defectNotes: 'Weft bar recurrence on LM-02.',
+            inspectorName: 'Sarah Lin (Senior QA)',
+            inspectedAt: new Date(now.getTime() - 5 * day + 1 * hour),
+          },
+        ],
+        isDemo: true,
+      },
+      // 8. LM-02 Hotspot sample 4: PASS
+      {
+        rollId: 'FR-2026-000008',
+        order: orderMap['PO-2026-0002']?._id,
+        machine: machineMap['LM-02']?._id,
+        quantityMetres: 100.0,
+        weight: 20.0,
+        stage: 'GREY',
+        stageEnteredAt: new Date(now.getTime() - 6 * day),
+        stageHistory: [{ stage: 'GREY', machineCode: 'LM-02', enteredAt: new Date(now.getTime() - 6 * day), exitedAt: null }],
+        qualityStatus: 'PASS',
+        defectNotes: 'Clean weave pass.',
+        inspectedAt: new Date(now.getTime() - 6 * day + 1 * hour),
+        dispatchStatus: 'NOT_DISPATCHED',
+        inspections: [
+          {
+            stage: 'GREY',
+            result: 'PASS',
+            defects: [{ code: 'SLUB', severity: 'MINOR', quantity: 3 }],
+            defectPoints: 3,
+            pointsPer100m: 3.0,
+            recommendedResult: 'PASS',
+            isOverride: false,
+            machineCode: 'LM-02',
+            defectNotes: 'Clean weave pass.',
+            inspectorName: 'Devon Vance (QA Lead)',
+            inspectedAt: new Date(now.getTime() - 6 * day + 1 * hour),
+          },
+        ],
+        isDemo: true,
+      },
+      // 9. LM-02 Hotspot sample 5: PASS
+      {
+        rollId: 'FR-2026-000009',
+        order: orderMap['PO-2026-0002']?._id,
+        machine: machineMap['LM-02']?._id,
+        quantityMetres: 100.0,
+        weight: 20.0,
+        stage: 'GREY',
+        stageEnteredAt: new Date(now.getTime() - 6 * day + 4 * hour),
+        stageHistory: [{ stage: 'GREY', machineCode: 'LM-02', enteredAt: new Date(now.getTime() - 6 * day + 4 * hour), exitedAt: null }],
+        qualityStatus: 'PASS',
+        defectNotes: 'Pass grade A.',
+        inspectedAt: new Date(now.getTime() - 6 * day + 5 * hour),
+        dispatchStatus: 'NOT_DISPATCHED',
+        inspections: [
+          {
+            stage: 'GREY',
+            result: 'PASS',
+            defects: [],
+            defectPoints: 0,
+            pointsPer100m: 0.0,
+            recommendedResult: 'PASS',
+            isOverride: false,
+            machineCode: 'LM-02',
+            defectNotes: 'Pass grade A.',
+            inspectorName: 'Devon Vance (QA Lead)',
+            inspectedAt: new Date(now.getTime() - 6 * day + 5 * hour),
+          },
+        ],
+        isDemo: true,
+      },
+      // 10. LM-02 Hotspot sample 6: PASS (Total: 6 first-pass on LM-02, 3 non-pass = 50% critical hotspot!)
+      {
+        rollId: 'FR-2026-000010',
+        order: orderMap['PO-2026-0002']?._id,
+        machine: machineMap['LM-02']?._id,
+        quantityMetres: 100.0,
+        weight: 20.0,
+        stage: 'GREY',
+        stageEnteredAt: new Date(now.getTime() - 5 * day + 4 * hour),
+        stageHistory: [{ stage: 'GREY', machineCode: 'LM-02', enteredAt: new Date(now.getTime() - 5 * day + 4 * hour), exitedAt: null }],
+        qualityStatus: 'PASS',
+        defectNotes: 'Grade A.',
+        inspectedAt: new Date(now.getTime() - 5 * day + 6 * hour),
+        dispatchStatus: 'NOT_DISPATCHED',
+        inspections: [
+          {
+            stage: 'GREY',
+            result: 'PASS',
+            defects: [],
+            defectPoints: 0,
+            pointsPer100m: 0.0,
+            recommendedResult: 'PASS',
+            isOverride: false,
+            machineCode: 'LM-02',
+            defectNotes: 'Grade A.',
+            inspectorName: 'Sarah Lin (Senior QA)',
+            inspectedAt: new Date(now.getTime() - 5 * day + 6 * hour),
+          },
+        ],
+        isDemo: true,
+      },
+      // 11. GREY - REWORK LIMIT REACHED (2 reworks already at GREY)
+      {
+        rollId: 'FR-2026-000011',
+        order: orderMap['PO-2026-0003']?._id,
+        machine: machineMap['LM-03']?._id,
+        quantityMetres: 100.0,
+        weight: 20.0,
+        stage: 'GREY',
+        stageEnteredAt: new Date(now.getTime() - 3 * day),
+        stageHistory: [{ stage: 'GREY', machineCode: 'LM-03', enteredAt: new Date(now.getTime() - 3 * day), exitedAt: null }],
+        qualityStatus: 'REWORK',
+        defectNotes: 'Second rework attempt still showing tension slubs.',
+        inspectedAt: new Date(now.getTime() - 1 * day),
+        dispatchStatus: 'NOT_DISPATCHED',
+        inspections: [
+          {
+            stage: 'GREY',
+            result: 'REWORK',
+            defects: [{ code: 'SLUB', severity: 'MAJOR', quantity: 8 }],
+            defectPoints: 24,
+            pointsPer100m: 24.0,
+            recommendedResult: 'REWORK',
+            isOverride: false,
+            machineCode: 'LM-03',
+            defectNotes: 'First rework inspection.',
+            inspectorName: 'Devon Vance (QA Lead)',
+            inspectedAt: new Date(now.getTime() - 2 * day),
+          },
+          {
+            stage: 'GREY',
+            result: 'REWORK',
+            defects: [{ code: 'SLUB', severity: 'MAJOR', quantity: 7 }],
+            defectPoints: 21,
+            pointsPer100m: 21.0,
+            recommendedResult: 'REWORK',
+            isOverride: false,
+            machineCode: 'LM-03',
+            defectNotes: 'Second rework attempt still showing tension slubs.',
+            inspectorName: 'Sarah Lin (Senior QA)',
+            inspectedAt: new Date(now.getTime() - 1 * day),
+          },
+        ],
+        isDemo: true,
+      },
+      // 12. DYEING - PENDING (Advanced from GREY to DYEING on DY-01)
+      {
+        rollId: 'FR-2026-000012',
+        order: orderMap['PO-2026-0001']?._id,
+        machine: machineMap['DY-01']?._id,
+        quantityMetres: 120.0,
+        weight: 24.0,
+        stage: 'DYEING',
+        stageEnteredAt: new Date(now.getTime() - 2 * hour),
+        stageHistory: [
+          { stage: 'GREY', machineCode: 'LM-01', enteredAt: new Date(now.getTime() - 2 * day), exitedAt: new Date(now.getTime() - 2 * hour) },
+          { stage: 'DYEING', machineCode: 'DY-01', enteredAt: new Date(now.getTime() - 2 * hour), exitedAt: null },
+        ],
+        qualityStatus: 'PENDING',
+        defectNotes: '',
+        inspectedAt: null,
+        dispatchStatus: 'NOT_DISPATCHED',
+        inspections: [
+          {
+            stage: 'GREY',
+            result: 'PASS',
+            defects: [{ code: 'SLUB', severity: 'MINOR', quantity: 2 }],
+            defectPoints: 2,
+            pointsPer100m: 1.67,
+            recommendedResult: 'PASS',
+            isOverride: false,
+            machineCode: 'LM-01',
+            defectNotes: 'Grey inspection passed.',
+            inspectorName: 'Devon Vance',
+            inspectedAt: new Date(now.getTime() - 2 * day + 2 * hour),
+          },
+        ],
+        isDemo: true,
+      },
+      // 13. DYEING - REJECT (Caught at DYEING: Severe shade variation)
+      {
+        rollId: 'FR-2026-000013',
+        order: orderMap['PO-2026-0008']?._id,
+        machine: machineMap['DY-01']?._id,
+        quantityMetres: 100.0,
+        weight: 20.0,
+        stage: 'DYEING',
+        stageEnteredAt: new Date(now.getTime() - 3 * day),
+        stageHistory: [
+          { stage: 'GREY', machineCode: 'LM-01', enteredAt: new Date(now.getTime() - 5 * day), exitedAt: new Date(now.getTime() - 3 * day) },
+          { stage: 'DYEING', machineCode: 'DY-01', enteredAt: new Date(now.getTime() - 3 * day), exitedAt: null },
+        ],
+        qualityStatus: 'REJECT',
+        defectNotes: 'Severe dye shade variation across entire bolt.',
+        inspectedAt: new Date(now.getTime() - 2 * day),
+        dispatchStatus: 'NOT_DISPATCHED',
+        inspections: [
+          {
+            stage: 'GREY',
+            result: 'PASS',
+            defects: [],
+            defectPoints: 0,
+            pointsPer100m: 0,
+            recommendedResult: 'PASS',
+            isOverride: false,
+            machineCode: 'LM-01',
+            defectNotes: 'Grey clear.',
+            inspectorName: 'Devon Vance',
+            inspectedAt: new Date(now.getTime() - 4 * day),
+          },
+          {
+            stage: 'DYEING',
+            result: 'REJECT',
+            defects: [{ code: 'SHADE_VARIATION', severity: 'MAJOR', quantity: 9 }],
+            defectPoints: 27,
+            pointsPer100m: 27.0,
+            recommendedResult: 'REJECT',
+            isOverride: false,
+            machineCode: 'DY-01',
+            defectNotes: 'Severe dye shade variation across entire bolt.',
+            inspectorName: 'Sarah Lin',
             inspectedAt: new Date(now.getTime() - 2 * day),
           },
         ],
         isDemo: true,
       },
-      // 5. PASS (Ready for dispatch)
+      // 14. DYEING - PASS (Dyeing machine DY-01 recurrence sample 1)
       {
-        rollId: 'FR-2026-000005',
-        order: orderMap['PO-2026-0002']?._id,
-        machine: machineMap['LM-02']?._id,
-        quantityMetres: 250.0,
-        weight: 51.2,
-        stage: 'packaged',
+        rollId: 'FR-2026-000014',
+        order: orderMap['PO-2026-0001']?._id,
+        machine: machineMap['DY-01']?._id,
+        quantityMetres: 100.0,
+        weight: 20.0,
+        stage: 'DYEING',
+        stageEnteredAt: new Date(now.getTime() - 4 * day),
+        stageHistory: [
+          { stage: 'GREY', machineCode: 'LM-01', enteredAt: new Date(now.getTime() - 6 * day), exitedAt: new Date(now.getTime() - 4 * day) },
+          { stage: 'DYEING', machineCode: 'DY-01', enteredAt: new Date(now.getTime() - 4 * day), exitedAt: null },
+        ],
         qualityStatus: 'PASS',
-        defectNotes: 'Denim twill density 3/1 verified. 4-point inspection score: 12 pts.',
+        defectNotes: 'Slight shade variation within Delta-E 0.8 tolerance.',
         inspectedAt: new Date(now.getTime() - 3 * day),
-        dispatchStatus: 'READY_FOR_DISPATCH',
-        dispatchedAt: null,
+        dispatchStatus: 'NOT_DISPATCHED',
         inspections: [
           {
+            stage: 'GREY',
             result: 'PASS',
-            defectNotes: 'Denim twill density 3/1 verified. 4-point inspection score: 12 pts.',
-            inspectorName: 'Sarah Lin (Senior QA)',
+            defects: [],
+            defectPoints: 0,
+            pointsPer100m: 0,
+            recommendedResult: 'PASS',
+            isOverride: false,
+            machineCode: 'LM-01',
+            defectNotes: 'Grey passed.',
+            inspectorName: 'Devon Vance',
+            inspectedAt: new Date(now.getTime() - 5 * day),
+          },
+          {
+            stage: 'DYEING',
+            result: 'PASS',
+            defects: [{ code: 'SHADE_VARIATION', severity: 'MINOR', quantity: 3 }],
+            defectPoints: 3,
+            pointsPer100m: 3.0,
+            recommendedResult: 'PASS',
+            isOverride: false,
+            machineCode: 'DY-01',
+            defectNotes: 'Slight shade variation within Delta-E 0.8 tolerance.',
+            inspectorName: 'Sarah Lin',
             inspectedAt: new Date(now.getTime() - 3 * day),
           },
         ],
         isDemo: true,
       },
-      // 6. PASS (Ready for dispatch)
+      // 15. DYEING - PASS (Dyeing machine DY-01 recurrence sample 2)
       {
-        rollId: 'FR-2026-000006',
-        order: orderMap['PO-2026-0003']?._id,
-        machine: machineMap['LM-03']?._id,
-        quantityMetres: 180.0,
-        weight: 36.4,
-        stage: 'packaged',
-        qualityStatus: 'PASS',
-        defectNotes: 'Quick-dry wicking rate verified within ASTM standards.',
-        inspectedAt: new Date(now.getTime() - 1 * day),
-        dispatchStatus: 'READY_FOR_DISPATCH',
-        dispatchedAt: null,
-        inspections: [
-          {
-            result: 'PASS',
-            defectNotes: 'Quick-dry wicking rate verified within ASTM standards.',
-            inspectorName: 'Marcus Cole',
-            inspectedAt: new Date(now.getTime() - 1 * day),
-          },
+        rollId: 'FR-2026-000015',
+        order: orderMap['PO-2026-0001']?._id,
+        machine: machineMap['DY-01']?._id,
+        quantityMetres: 100.0,
+        weight: 20.0,
+        stage: 'DYEING',
+        stageEnteredAt: new Date(now.getTime() - 5 * day),
+        stageHistory: [
+          { stage: 'GREY', machineCode: 'LM-01', enteredAt: new Date(now.getTime() - 7 * day), exitedAt: new Date(now.getTime() - 5 * day) },
+          { stage: 'DYEING', machineCode: 'DY-01', enteredAt: new Date(now.getTime() - 5 * day), exitedAt: null },
         ],
-        isDemo: true,
-      },
-      // 7. PASS (Dispatched)
-      {
-        rollId: 'FR-2026-000007',
-        order: orderMap['PO-2026-0005']?._id,
-        machine: machineMap['LM-01']?._id,
-        quantityMetres: 300.0,
-        weight: 62.0,
-        stage: 'dispatched',
         qualityStatus: 'PASS',
-        defectNotes: 'Heavy drill uniform weave, moisture barrier applied.',
-        inspectedAt: new Date(now.getTime() - 5 * day),
-        dispatchStatus: 'DISPATCHED',
-        dispatchedAt: new Date(now.getTime() - 2 * day),
-        inspections: [
-          {
-            result: 'PASS',
-            defectNotes: 'Heavy drill uniform weave, moisture barrier applied.',
-            inspectorName: 'Devon Vance (QA Lead)',
-            inspectedAt: new Date(now.getTime() - 5 * day),
-          },
-        ],
-        isDemo: true,
-      },
-      // 8. PASS (Dispatched)
-      {
-        rollId: 'FR-2026-000008',
-        order: orderMap['PO-2026-0006']?._id,
-        machine: machineMap['LM-04']?._id,
-        quantityMetres: 200.0,
-        weight: 41.0,
-        stage: 'dispatched',
-        qualityStatus: 'PASS',
-        defectNotes: '100% Poplin solid dyed batch approved.',
+        defectNotes: 'Minor dye spots cleaned up in wash.',
         inspectedAt: new Date(now.getTime() - 4 * day),
-        dispatchStatus: 'DISPATCHED',
-        dispatchedAt: new Date(now.getTime() - 1 * day),
+        dispatchStatus: 'NOT_DISPATCHED',
         inspections: [
           {
+            stage: 'GREY',
             result: 'PASS',
-            defectNotes: '100% Poplin solid dyed batch approved.',
-            inspectorName: 'Sarah Lin (Senior QA)',
+            defects: [],
+            defectPoints: 0,
+            pointsPer100m: 0,
+            recommendedResult: 'PASS',
+            isOverride: false,
+            machineCode: 'LM-01',
+            defectNotes: 'Grey passed.',
+            inspectorName: 'Devon Vance',
+            inspectedAt: new Date(now.getTime() - 6 * day),
+          },
+          {
+            stage: 'DYEING',
+            result: 'PASS',
+            defects: [{ code: 'SHADE_VARIATION', severity: 'MINOR', quantity: 4 }],
+            defectPoints: 4,
+            pointsPer100m: 4.0,
+            recommendedResult: 'PASS',
+            isOverride: false,
+            machineCode: 'DY-01',
+            defectNotes: 'Minor dye spots cleaned up in wash.',
+            inspectorName: 'Devon Vance',
             inspectedAt: new Date(now.getTime() - 4 * day),
           },
         ],
         isDemo: true,
       },
-      // 9. REWORK (Active Rework)
+      // 16. FINISHING - PENDING
       {
-        rollId: 'FR-2026-000009',
-        order: orderMap['PO-2026-0002']?._id,
-        machine: machineMap['LM-02']?._id,
-        quantityMetres: 210.5,
-        weight: 43.0,
-        stage: 'inspection',
-        qualityStatus: 'REWORK',
-        defectNotes: 'Uneven selvedge tension causing 10m wavy edge. Trim and re-edge required.',
-        inspectedAt: new Date(now.getTime() - 1 * day),
+        rollId: 'FR-2026-000016',
+        order: orderMap['PO-2026-0001']?._id,
+        machine: machineMap['FN-01']?._id,
+        quantityMetres: 100.0,
+        weight: 20.0,
+        stage: 'FINISHING',
+        stageEnteredAt: new Date(now.getTime() - 1 * hour),
+        stageHistory: [
+          { stage: 'GREY', machineCode: 'LM-01', enteredAt: new Date(now.getTime() - 5 * day), exitedAt: new Date(now.getTime() - 3 * day) },
+          { stage: 'DYEING', machineCode: 'DY-01', enteredAt: new Date(now.getTime() - 3 * day), exitedAt: new Date(now.getTime() - 1 * hour) },
+          { stage: 'FINISHING', machineCode: 'FN-01', enteredAt: new Date(now.getTime() - 1 * hour), exitedAt: null },
+        ],
+        qualityStatus: 'PENDING',
+        defectNotes: '',
+        inspectedAt: null,
         dispatchStatus: 'NOT_DISPATCHED',
-        dispatchedAt: null,
         inspections: [
           {
-            result: 'REWORK',
-            defectNotes: 'Uneven selvedge tension causing 10m wavy edge. Trim and re-edge required.',
-            inspectorName: 'Sarah Lin (Senior QA)',
+            stage: 'GREY',
+            result: 'PASS',
+            defects: [],
+            defectPoints: 0,
+            pointsPer100m: 0,
+            recommendedResult: 'PASS',
+            isOverride: false,
+            machineCode: 'LM-01',
+            defectNotes: 'Grey pass.',
+            inspectorName: 'Devon Vance',
+            inspectedAt: new Date(now.getTime() - 4 * day),
+          },
+          {
+            stage: 'DYEING',
+            result: 'PASS',
+            defects: [],
+            defectPoints: 0,
+            pointsPer100m: 0,
+            recommendedResult: 'PASS',
+            isOverride: false,
+            machineCode: 'DY-01',
+            defectNotes: 'Dyeing pass.',
+            inspectorName: 'Sarah Lin',
+            inspectedAt: new Date(now.getTime() - 2 * day),
+          },
+        ],
+        isDemo: true,
+      },
+      // 17. FINISHING - PASS (With Lenient Override & Valid Reason)
+      {
+        rollId: 'FR-2026-000017',
+        order: orderMap['PO-2026-0001']?._id,
+        machine: machineMap['FN-01']?._id,
+        quantityMetres: 100.0,
+        weight: 20.0,
+        stage: 'FINISHING',
+        stageEnteredAt: new Date(now.getTime() - 2 * day),
+        stageHistory: [
+          { stage: 'GREY', machineCode: 'LM-01', enteredAt: new Date(now.getTime() - 6 * day), exitedAt: new Date(now.getTime() - 4 * day) },
+          { stage: 'DYEING', machineCode: 'DY-01', enteredAt: new Date(now.getTime() - 4 * day), exitedAt: new Date(now.getTime() - 2 * day) },
+          { stage: 'FINISHING', machineCode: 'FN-01', enteredAt: new Date(now.getTime() - 2 * day), exitedAt: null },
+        ],
+        qualityStatus: 'PASS',
+        defectNotes: 'Minor handfeel stiffness approved per buyer waiver.',
+        inspectedAt: new Date(now.getTime() - 1 * day),
+        dispatchStatus: 'NOT_DISPATCHED',
+        inspections: [
+          {
+            stage: 'GREY',
+            result: 'PASS',
+            defects: [],
+            defectPoints: 0,
+            pointsPer100m: 0,
+            recommendedResult: 'PASS',
+            isOverride: false,
+            machineCode: 'LM-01',
+            defectNotes: 'Grey pass.',
+            inspectorName: 'Devon Vance',
+            inspectedAt: new Date(now.getTime() - 5 * day),
+          },
+          {
+            stage: 'DYEING',
+            result: 'PASS',
+            defects: [],
+            defectPoints: 0,
+            pointsPer100m: 0,
+            recommendedResult: 'PASS',
+            isOverride: false,
+            machineCode: 'DY-01',
+            defectNotes: 'Dyeing pass.',
+            inspectorName: 'Sarah Lin',
+            inspectedAt: new Date(now.getTime() - 3 * day),
+          },
+          {
+            stage: 'FINISHING',
+            result: 'PASS',
+            defects: [{ code: 'HANDFEEL_ISSUE', severity: 'MAJOR', quantity: 4 }],
+            defectPoints: 12,
+            pointsPer100m: 12.0,
+            recommendedResult: 'REWORK',
+            isOverride: true,
+            overrideReason: 'Approved by buyer QA team under concession waiver #WAIV-2026-08',
+            machineCode: 'FN-01',
+            defectNotes: 'Minor handfeel stiffness approved per buyer waiver.',
+            inspectorName: 'Devon Vance (QA Lead)',
             inspectedAt: new Date(now.getTime() - 1 * day),
           },
         ],
         isDemo: true,
       },
-      // 10. REWORK with Multi-Entry History (REWORK -> Re-inspected as PASS)
+      // 18. FINAL - ESCAPE DETECTED (GREY defect 'WEFT_BAR' escaped and caught at FINAL)
       {
-        rollId: 'FR-2026-000010',
-        order: orderMap['PO-2026-0001']?._id,
-        machine: machineMap['LM-01']?._id,
-        quantityMetres: 145.0,
-        weight: 29.5,
-        stage: 'packaged',
-        qualityStatus: 'PASS',
-        defectNotes: 'Re-inspection after heat setting: weft skew straightened within 1.5% tolerance.',
-        inspectedAt: new Date(now.getTime() - 6 * 60 * 60 * 1000),
-        dispatchStatus: 'READY_FOR_DISPATCH',
-        dispatchedAt: null,
+        rollId: 'FR-2026-000018',
+        order: orderMap['PO-2026-0002']?._id,
+        machine: machineMap['FN-01']?._id,
+        quantityMetres: 100.0,
+        weight: 20.0,
+        stage: 'FINAL',
+        stageEnteredAt: new Date(now.getTime() - 1 * day),
+        stageHistory: [
+          { stage: 'GREY', machineCode: 'LM-02', enteredAt: new Date(now.getTime() - 8 * day), exitedAt: new Date(now.getTime() - 5 * day) },
+          { stage: 'DYEING', machineCode: 'DY-01', enteredAt: new Date(now.getTime() - 5 * day), exitedAt: new Date(now.getTime() - 3 * day) },
+          { stage: 'FINISHING', machineCode: 'FN-01', enteredAt: new Date(now.getTime() - 3 * day), exitedAt: new Date(now.getTime() - 1 * day) },
+          { stage: 'FINAL', machineCode: null, enteredAt: new Date(now.getTime() - 1 * day), exitedAt: null },
+        ],
+        qualityStatus: 'REWORK',
+        defectNotes: 'Escaped weft bar from weaving discovered during final inspection.',
+        inspectedAt: new Date(now.getTime() - 12 * hour),
+        dispatchStatus: 'NOT_DISPATCHED',
         inspections: [
           {
-            result: 'REWORK',
-            defectNotes: 'Excessive weft skew (3.8%) observed at roll end. Send for re-stenter framing.',
-            inspectorName: 'Devon Vance (QA Lead)',
-            inspectedAt: new Date(now.getTime() - 2 * day),
-          },
-          {
+            stage: 'GREY',
             result: 'PASS',
-            defectNotes: 'Re-inspection after heat setting: weft skew straightened within 1.5% tolerance.',
-            inspectorName: 'Sarah Lin (Senior QA)',
-            inspectedAt: new Date(now.getTime() - 6 * 60 * 60 * 1000),
+            defects: [],
+            defectPoints: 0,
+            pointsPer100m: 0,
+            recommendedResult: 'PASS',
+            isOverride: false,
+            machineCode: 'LM-02',
+            defectNotes: 'Grey passed.',
+            inspectorName: 'Devon Vance',
+            inspectedAt: new Date(now.getTime() - 6 * day),
           },
-        ],
-        isDemo: true,
-      },
-      // 11. REJECT 1 (Severe Weft Bar defect)
-      {
-        rollId: 'FR-2026-000011',
-        order: orderMap['PO-2026-0008']?._id,
-        machine: machineMap['DY-01']?._id,
-        quantityMetres: 160.0,
-        weight: 32.0,
-        stage: 'quarantine',
-        qualityStatus: 'REJECT',
-        defectNotes: 'Severe dye shade variation (Delta-E > 4.5) and multiple dye spots across center 40m. Quarantined.',
-        inspectedAt: new Date(now.getTime() - 2 * day),
-        dispatchStatus: 'NOT_DISPATCHED',
-        dispatchedAt: null,
-        inspections: [
           {
-            result: 'REJECT',
-            defectNotes: 'Severe dye shade variation (Delta-E > 4.5) and multiple dye spots across center 40m. Quarantined.',
-            inspectorName: 'Devon Vance (QA Lead)',
+            stage: 'DYEING',
+            result: 'PASS',
+            defects: [],
+            defectPoints: 0,
+            pointsPer100m: 0,
+            recommendedResult: 'PASS',
+            isOverride: false,
+            machineCode: 'DY-01',
+            defectNotes: 'Dyeing passed.',
+            inspectorName: 'Sarah Lin',
+            inspectedAt: new Date(now.getTime() - 4 * day),
+          },
+          {
+            stage: 'FINISHING',
+            result: 'PASS',
+            defects: [],
+            defectPoints: 0,
+            pointsPer100m: 0,
+            recommendedResult: 'PASS',
+            isOverride: false,
+            machineCode: 'FN-01',
+            defectNotes: 'Finishing passed.',
+            inspectorName: 'Marcus Cole',
             inspectedAt: new Date(now.getTime() - 2 * day),
           },
+          {
+            stage: 'FINAL',
+            result: 'REWORK',
+            defects: [{ code: 'WEFT_BAR', severity: 'MAJOR', quantity: 3 }],
+            defectPoints: 9,
+            pointsPer100m: 9.0,
+            recommendedResult: 'REWORK',
+            isOverride: false,
+            machineCode: 'FN-01',
+            defectNotes: 'Escaped weft bar from weaving discovered during final inspection.',
+            inspectorName: 'Devon Vance (QA Lead)',
+            inspectedAt: new Date(now.getTime() - 12 * hour),
+          },
         ],
         isDemo: true,
       },
-      // 12. REJECT 2 (Needle line and hole damage)
+      // 19. FINAL - REJECT (Late detection: Caught at FINAL)
       {
-        rollId: 'FR-2026-000012',
-        order: orderMap['PO-2026-0010']?._id,
-        machine: machineMap['KN-01']?._id,
-        quantityMetres: 95.0,
-        weight: 19.2,
-        stage: 'quarantine',
+        rollId: 'FR-2026-000019',
+        order: orderMap['PO-2026-0003']?._id,
+        machine: machineMap['FN-01']?._id,
+        quantityMetres: 100.0,
+        weight: 20.0,
+        stage: 'FINAL',
+        stageEnteredAt: new Date(now.getTime() - 1 * day),
+        stageHistory: [
+          { stage: 'GREY', machineCode: 'LM-03', enteredAt: new Date(now.getTime() - 7 * day), exitedAt: new Date(now.getTime() - 4 * day) },
+          { stage: 'DYEING', machineCode: 'DY-01', enteredAt: new Date(now.getTime() - 4 * day), exitedAt: new Date(now.getTime() - 2 * day) },
+          { stage: 'FINISHING', machineCode: 'FN-01', enteredAt: new Date(now.getTime() - 2 * day), exitedAt: new Date(now.getTime() - 1 * day) },
+          { stage: 'FINAL', machineCode: null, enteredAt: new Date(now.getTime() - 1 * day), exitedAt: null },
+        ],
         qualityStatus: 'REJECT',
-        defectNotes: 'Broken latch needle caused continuous drop stitches and holes throughout 60m of fabric. Scrap.',
-        inspectedAt: new Date(now.getTime() - 1 * day),
+        defectNotes: 'Gross packing and label defects with uncorrectable selvage tear. Roll rejected.',
+        inspectedAt: new Date(now.getTime() - 10 * hour),
         dispatchStatus: 'NOT_DISPATCHED',
-        dispatchedAt: null,
         inspections: [
           {
-            result: 'REJECT',
-            defectNotes: 'Broken latch needle caused continuous drop stitches and holes throughout 60m of fabric. Scrap.',
+            stage: 'GREY',
+            result: 'PASS',
+            defects: [],
+            defectPoints: 0,
+            pointsPer100m: 0,
+            recommendedResult: 'PASS',
+            isOverride: false,
+            machineCode: 'LM-03',
+            defectNotes: 'Grey pass.',
+            inspectorName: 'Devon Vance',
+            inspectedAt: new Date(now.getTime() - 5 * day),
+          },
+          {
+            stage: 'DYEING',
+            result: 'PASS',
+            defects: [],
+            defectPoints: 0,
+            pointsPer100m: 0,
+            recommendedResult: 'PASS',
+            isOverride: false,
+            machineCode: 'DY-01',
+            defectNotes: 'Dyeing pass.',
+            inspectorName: 'Sarah Lin',
+            inspectedAt: new Date(now.getTime() - 3 * day),
+          },
+          {
+            stage: 'FINISHING',
+            result: 'PASS',
+            defects: [],
+            defectPoints: 0,
+            pointsPer100m: 0,
+            recommendedResult: 'PASS',
+            isOverride: false,
+            machineCode: 'FN-01',
+            defectNotes: 'Finishing pass.',
             inspectorName: 'Marcus Cole',
             inspectedAt: new Date(now.getTime() - 1 * day),
           },
-        ],
-        isDemo: true,
-      },
-      // 13. PASS (Fresh pass)
-      {
-        rollId: 'FR-2026-000013',
-        order: orderMap['PO-2026-0003']?._id,
-        machine: machineMap['LM-03']?._id,
-        quantityMetres: 175.0,
-        weight: 35.0,
-        stage: 'finished',
-        qualityStatus: 'PASS',
-        defectNotes: 'Zero structural flaws. GSM 260 verified within 1% spec.',
-        inspectedAt: new Date(now.getTime() - 8 * 60 * 60 * 1000),
-        dispatchStatus: 'NOT_DISPATCHED',
-        dispatchedAt: null,
-        inspections: [
           {
-            result: 'PASS',
-            defectNotes: 'Zero structural flaws. GSM 260 verified within 1% spec.',
-            inspectorName: 'Sarah Lin (Senior QA)',
-            inspectedAt: new Date(now.getTime() - 8 * 60 * 60 * 1000),
+            stage: 'FINAL',
+            result: 'REJECT',
+            defects: [
+              { code: 'PACKING_DEFECT', severity: 'MAJOR', quantity: 3 },
+              { code: 'LABEL_ERROR', severity: 'MAJOR', quantity: 3 },
+            ],
+            defectPoints: 18,
+            pointsPer100m: 18.0,
+            recommendedResult: 'REJECT',
+            isOverride: false,
+            machineCode: null,
+            defectNotes: 'Gross packing and label defects with uncorrectable selvage tear. Roll rejected.',
+            inspectorName: 'Devon Vance (QA Lead)',
+            inspectedAt: new Date(now.getTime() - 10 * hour),
           },
         ],
         isDemo: true,
       },
-      // 14. PASS (Finished)
+      // 20. FINAL - PASS (READY_FOR_DISPATCH)
       {
-        rollId: 'FR-2026-000014',
-        order: orderMap['PO-2026-0004']?._id,
-        machine: machineMap['LM-04']?._id,
-        quantityMetres: 110.0,
-        weight: 22.0,
-        stage: 'finished',
+        rollId: 'FR-2026-000020',
+        order: orderMap['PO-2026-0005']?._id,
+        machine: machineMap['LM-01']?._id,
+        quantityMetres: 200.0,
+        weight: 40.0,
+        stage: 'FINAL',
+        stageEnteredAt: new Date(now.getTime() - 3 * day),
+        stageHistory: [
+          { stage: 'GREY', machineCode: 'LM-01', enteredAt: new Date(now.getTime() - 10 * day), exitedAt: new Date(now.getTime() - 7 * day) },
+          { stage: 'DYEING', machineCode: 'DY-01', enteredAt: new Date(now.getTime() - 7 * day), exitedAt: new Date(now.getTime() - 5 * day) },
+          { stage: 'FINISHING', machineCode: 'FN-01', enteredAt: new Date(now.getTime() - 5 * day), exitedAt: new Date(now.getTime() - 3 * day) },
+          { stage: 'FINAL', machineCode: null, enteredAt: new Date(now.getTime() - 3 * day), exitedAt: null },
+        ],
         qualityStatus: 'PASS',
-        defectNotes: 'Linen blend weave natural slubs acceptable per buyer aesthetic spec.',
-        inspectedAt: new Date(now.getTime() - 12 * 60 * 60 * 1000),
-        dispatchStatus: 'NOT_DISPATCHED',
-        dispatchedAt: null,
+        defectNotes: 'All 4 gates passed flawlessly. Staged for shipping.',
+        inspectedAt: new Date(now.getTime() - 2 * day),
+        dispatchStatus: 'READY_FOR_DISPATCH',
         inspections: [
           {
+            stage: 'GREY',
             result: 'PASS',
-            defectNotes: 'Linen blend weave natural slubs acceptable per buyer aesthetic spec.',
-            inspectorName: 'Devon Vance (QA Lead)',
-            inspectedAt: new Date(now.getTime() - 12 * 60 * 60 * 1000),
+            defects: [],
+            defectPoints: 0,
+            pointsPer100m: 0,
+            recommendedResult: 'PASS',
+            isOverride: false,
+            machineCode: 'LM-01',
+            defectNotes: 'Grey passed.',
+            inspectorName: 'Devon Vance',
+            inspectedAt: new Date(now.getTime() - 8 * day),
+          },
+          {
+            stage: 'DYEING',
+            result: 'PASS',
+            defects: [],
+            defectPoints: 0,
+            pointsPer100m: 0,
+            recommendedResult: 'PASS',
+            isOverride: false,
+            machineCode: 'DY-01',
+            defectNotes: 'Dyeing passed.',
+            inspectorName: 'Sarah Lin',
+            inspectedAt: new Date(now.getTime() - 6 * day),
+          },
+          {
+            stage: 'FINISHING',
+            result: 'PASS',
+            defects: [],
+            defectPoints: 0,
+            pointsPer100m: 0,
+            recommendedResult: 'PASS',
+            isOverride: false,
+            machineCode: 'FN-01',
+            defectNotes: 'Finishing passed.',
+            inspectorName: 'Marcus Cole',
+            inspectedAt: new Date(now.getTime() - 4 * day),
+          },
+          {
+            stage: 'FINAL',
+            result: 'PASS',
+            defects: [{ code: 'PACKING_DEFECT', severity: 'MINOR', quantity: 1 }],
+            defectPoints: 1,
+            pointsPer100m: 0.5,
+            recommendedResult: 'PASS',
+            isOverride: false,
+            machineCode: null,
+            defectNotes: 'All 4 gates passed flawlessly. Staged for shipping.',
+            inspectorName: 'Sarah Lin (Senior QA)',
+            inspectedAt: new Date(now.getTime() - 2 * day),
+          },
+        ],
+        isDemo: true,
+      },
+      // 21. FINAL - PASS (DISPATCHED)
+      {
+        rollId: 'FR-2026-000021',
+        order: orderMap['PO-2026-0005']?._id,
+        machine: machineMap['LM-01']?._id,
+        quantityMetres: 250.0,
+        weight: 50.0,
+        stage: 'FINAL',
+        stageEnteredAt: new Date(now.getTime() - 5 * day),
+        stageHistory: [
+          { stage: 'GREY', machineCode: 'LM-01', enteredAt: new Date(now.getTime() - 12 * day), exitedAt: new Date(now.getTime() - 9 * day) },
+          { stage: 'DYEING', machineCode: 'DY-01', enteredAt: new Date(now.getTime() - 9 * day), exitedAt: new Date(now.getTime() - 7 * day) },
+          { stage: 'FINISHING', machineCode: 'FN-01', enteredAt: new Date(now.getTime() - 7 * day), exitedAt: new Date(now.getTime() - 5 * day) },
+          { stage: 'FINAL', machineCode: null, enteredAt: new Date(now.getTime() - 5 * day), exitedAt: new Date(now.getTime() - 2 * day) },
+        ],
+        qualityStatus: 'PASS',
+        defectNotes: 'Dispatched to buyer.',
+        inspectedAt: new Date(now.getTime() - 4 * day),
+        dispatchStatus: 'DISPATCHED',
+        dispatchedAt: new Date(now.getTime() - 2 * day),
+        inspections: [
+          {
+            stage: 'FINAL',
+            result: 'PASS',
+            defects: [],
+            defectPoints: 0,
+            pointsPer100m: 0,
+            recommendedResult: 'PASS',
+            isOverride: false,
+            machineCode: null,
+            defectNotes: 'Dispatched to buyer.',
+            inspectorName: 'Sarah Lin',
+            inspectedAt: new Date(now.getTime() - 4 * day),
+          },
+        ],
+        isDemo: true,
+      },
+      // 22. FINAL - PASS (DISPATCHED)
+      {
+        rollId: 'FR-2026-000022',
+        order: orderMap['PO-2026-0006']?._id,
+        machine: machineMap['LM-04']?._id,
+        quantityMetres: 180.0,
+        weight: 36.0,
+        stage: 'FINAL',
+        stageEnteredAt: new Date(now.getTime() - 6 * day),
+        stageHistory: [
+          { stage: 'GREY', machineCode: 'LM-04', enteredAt: new Date(now.getTime() - 14 * day), exitedAt: new Date(now.getTime() - 10 * day) },
+          { stage: 'DYEING', machineCode: 'DY-01', enteredAt: new Date(now.getTime() - 10 * day), exitedAt: new Date(now.getTime() - 8 * day) },
+          { stage: 'FINISHING', machineCode: 'FN-01', enteredAt: new Date(now.getTime() - 8 * day), exitedAt: new Date(now.getTime() - 6 * day) },
+          { stage: 'FINAL', machineCode: null, enteredAt: new Date(now.getTime() - 6 * day), exitedAt: new Date(now.getTime() - 3 * day) },
+        ],
+        qualityStatus: 'PASS',
+        defectNotes: 'Dispatched on schedule.',
+        inspectedAt: new Date(now.getTime() - 5 * day),
+        dispatchStatus: 'DISPATCHED',
+        dispatchedAt: new Date(now.getTime() - 3 * day),
+        inspections: [
+          {
+            stage: 'FINAL',
+            result: 'PASS',
+            defects: [],
+            defectPoints: 0,
+            pointsPer100m: 0,
+            recommendedResult: 'PASS',
+            isOverride: false,
+            machineCode: null,
+            defectNotes: 'Dispatched on schedule.',
+            inspectorName: 'Devon Vance',
+            inspectedAt: new Date(now.getTime() - 5 * day),
+          },
+        ],
+        isDemo: true,
+      },
+      // 23. GREY - PASS (Healthy machine LM-04)
+      {
+        rollId: 'FR-2026-000023',
+        order: orderMap['PO-2026-0004']?._id,
+        machine: machineMap['LM-04']?._id,
+        quantityMetres: 150.0,
+        weight: 30.0,
+        stage: 'GREY',
+        stageEnteredAt: new Date(now.getTime() - 1 * day),
+        stageHistory: [{ stage: 'GREY', machineCode: 'LM-04', enteredAt: new Date(now.getTime() - 1 * day), exitedAt: null }],
+        qualityStatus: 'PASS',
+        defectNotes: 'High speed loom run passed without defects.',
+        inspectedAt: new Date(now.getTime() - 18 * hour),
+        dispatchStatus: 'NOT_DISPATCHED',
+        inspections: [
+          {
+            stage: 'GREY',
+            result: 'PASS',
+            defects: [],
+            defectPoints: 0,
+            pointsPer100m: 0,
+            recommendedResult: 'PASS',
+            isOverride: false,
+            machineCode: 'LM-04',
+            defectNotes: 'High speed loom run passed without defects.',
+            inspectorName: 'Devon Vance',
+            inspectedAt: new Date(now.getTime() - 18 * hour),
+          },
+        ],
+        isDemo: true,
+      },
+      // 24. GREY - PASS (Healthy machine LM-01)
+      {
+        rollId: 'FR-2026-000024',
+        order: orderMap['PO-2026-0001']?._id,
+        machine: machineMap['LM-01']?._id,
+        quantityMetres: 130.0,
+        weight: 26.0,
+        stage: 'GREY',
+        stageEnteredAt: new Date(now.getTime() - 20 * hour),
+        stageHistory: [{ stage: 'GREY', machineCode: 'LM-01', enteredAt: new Date(now.getTime() - 20 * hour), exitedAt: null }],
+        qualityStatus: 'PASS',
+        defectNotes: 'Selvedge tension uniform.',
+        inspectedAt: new Date(now.getTime() - 16 * hour),
+        dispatchStatus: 'NOT_DISPATCHED',
+        inspections: [
+          {
+            stage: 'GREY',
+            result: 'PASS',
+            defects: [{ code: 'OIL_STAIN', severity: 'MINOR', quantity: 1 }],
+            defectPoints: 1,
+            pointsPer100m: 0.77,
+            recommendedResult: 'PASS',
+            isOverride: false,
+            machineCode: 'LM-01',
+            defectNotes: 'Selvedge tension uniform.',
+            inspectorName: 'Sarah Lin',
+            inspectedAt: new Date(now.getTime() - 16 * hour),
           },
         ],
         isDemo: true,
@@ -491,12 +1145,12 @@ const seed = async () => {
 
     for (const r of rollDefs) {
       if (!r.order || !r.machine) {
-        console.warn(`⚠️ Skipping roll ${r.rollId}: parent order or machine reference not found.`);
+        console.warn(`⚠️ Skipping roll ${r.rollId}: missing order or machine.`);
         continue;
       }
       const res = await FabricRoll.findOneAndUpdate(
         { rollId: r.rollId },
-        { $setOnInsert: r },
+        { $set: r },
         { upsert: true, new: true, rawResult: true }
       );
       if (res.lastErrorObject?.updatedExisting) {
@@ -505,14 +1159,103 @@ const seed = async () => {
         rollsInserted++;
       }
     }
-
     console.log(`🎫 Fabric Rolls: ${rollsInserted} created, ${rollsExisted} existing.`);
 
-    // Initialize sequence counter so next generated roll starts at 15
+    // Initialize sequence counter so next generated roll starts at 25
     const currentYear = new Date().getFullYear();
     await Counter.findOneAndUpdate(
       { name: `roll_${currentYear}` },
-      { $max: { seq: 14 } },
+      { $max: { seq: 24 } },
+      { upsert: true }
+    );
+
+    // ----------------------------------------------------
+    // 5. SEED CORRECTIVE ACTIONS (4C: CAPA Records)
+    // ----------------------------------------------------
+    const caDefs = [
+      // 1. OPEN (Investigation initiated on LM-02 Weft Bar)
+      {
+        actionNumber: 'CA-2026-0001',
+        title: 'Weft Tension Guide Realignment & Calibration',
+        stage: 'GREY',
+        defectCode: 'WEFT_BAR',
+        machine: machineMap['LM-02']?._id,
+        rootCauseCategory: 'MACHINE',
+        description: 'Repeated weft bars observed during denim weaving. Investigate pneumatic insertion nozzle pressure and check electronic yarn brake wear.',
+        owner: 'Ramesh Kumar (Mechanical Lead)',
+        dueDate: new Date(now.getTime() + 4 * day),
+        status: 'OPEN',
+        isDemo: true,
+      },
+      // 2. IN_PROGRESS (Dyeing Jet Nozzle Descaling)
+      {
+        actionNumber: 'CA-2026-0002',
+        title: 'Jet Dyeing Vat DY-01 Flow Sensor Overhaul',
+        stage: 'DYEING',
+        defectCode: 'SHADE_VARIATION',
+        machine: machineMap['DY-01']?._id,
+        rootCauseCategory: 'MACHINE',
+        description: 'Uneven liquor ratio causing longitudinal shade variance. Cleaning internal heat exchanger and recalibrating dosing valves.',
+        owner: 'Priya Sharma (Chemical Engineer)',
+        dueDate: new Date(now.getTime() + 2 * day),
+        status: 'IN_PROGRESS',
+        isDemo: true,
+      },
+      // 3. DONE (With recurrences tracked since fix date)
+      {
+        actionNumber: 'CA-2026-0003',
+        title: 'Loom-02 Shuttle Box Buffer Replacement',
+        stage: 'GREY',
+        defectCode: 'WEFT_BAR',
+        machine: machineMap['LM-02']?._id,
+        rootCauseCategory: 'MACHINE',
+        description: 'Replaced hydraulic shock absorbers on left weft cutter.',
+        owner: 'Anil Mehta (Maintenance Tech)',
+        dueDate: new Date(now.getTime() - 2 * day),
+        status: 'DONE',
+        doneAt: new Date(now.getTime() - 6 * day), // Marked done 6 days ago -> subsequent weft bar inspections on LM-02 trigger recurrence!
+        isDemo: true,
+      },
+      // 4. VERIFIED (Successful fix with verification note)
+      {
+        actionNumber: 'CA-2026-0004',
+        title: 'Stenter Heat Chamber Temperature Sensor Calibration',
+        stage: 'FINISHING',
+        defectCode: 'HANDFEEL_ISSUE',
+        machine: machineMap['FN-01']?._id,
+        rootCauseCategory: 'METHOD',
+        description: 'Calibrated thermocouples in zones 3 & 4. Verified with pyrometer during 5 consecutive production batches.',
+        owner: 'Devon Vance (QA Lead)',
+        dueDate: new Date(now.getTime() - 3 * day),
+        status: 'VERIFIED',
+        doneAt: new Date(now.getTime() - 5 * day),
+        verifiedAt: new Date(now.getTime() - 2 * day),
+        verificationNote: 'Zero handfeel stiffness defects recorded across 1,200m of finished goods in the past 48 hours.',
+        isDemo: true,
+      },
+    ];
+
+    let caInserted = 0;
+    let caExisted = 0;
+
+    for (const ca of caDefs) {
+      const res = await CorrectiveAction.findOneAndUpdate(
+        { actionNumber: ca.actionNumber },
+        { $set: ca },
+        { upsert: true, new: true, rawResult: true }
+      );
+      if (res.lastErrorObject?.updatedExisting) {
+        caExisted++;
+      } else {
+        caInserted++;
+      }
+    }
+    console.log(`🛠️ Corrective Actions: ${caInserted} created, ${caExisted} existing.`);
+
+    // Initialize CA counter so next starts at 5
+    await Counter.findOneAndUpdate(
+      { name: `ca_${currentYear}` },
+      { $max: { seq: 4 } },
       { upsert: true }
     );
 
@@ -525,4 +1268,8 @@ const seed = async () => {
   }
 };
 
-seed();
+if (require.main === module) {
+  seed();
+}
+
+module.exports = seed;

@@ -133,6 +133,17 @@ const productionOrderSchema = new mongoose.Schema(
       default: false,
       index: true,
     },
+    updatedBy: {
+      userId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+        default: null,
+      },
+      name: {
+        type: String,
+        default: null,
+      },
+    },
   },
   {
     timestamps: true,

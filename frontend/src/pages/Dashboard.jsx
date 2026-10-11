@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { getDashboardSummary } from '../services/dashboardService';
+import { qualityService } from '../services/qualityService';
 import StatusBadge from '../components/StatusBadge';
 import ProgressBar from '../components/ProgressBar';
 import LoadingState from '../components/LoadingState';
@@ -18,6 +19,7 @@ import {
   Clock,
   CheckCircle2,
   AlertTriangle,
+  ShieldAlert,
 } from 'lucide-react';
 import {
   BarChart,
@@ -31,6 +33,7 @@ import {
 
 export const Dashboard = () => {
   const [data, setData] = useState(null);
+  const [qualityAlertsCount, setQualityAlertsCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -38,8 +41,12 @@ export const Dashboard = () => {
     setLoading(true);
     setError(null);
     try {
-      const result = await getDashboardSummary();
+      const [result, alertsResult] = await Promise.all([
+        getDashboardSummary(),
+        qualityService.getAlerts().catch(() => ({ count: 0 })),
+      ]);
       setData(result);
+      setQualityAlertsCount(alertsResult.count || 0);
     } catch (err) {
       setError(err);
     } finally {
@@ -54,12 +61,13 @@ export const Dashboard = () => {
   if (loading && !data) return <LoadingState message="Loading Command Center telemetry..." />;
   if (error && !data) return <ErrorState title="Failed to load dashboard metrics" error={error} onRetry={fetchData} />;
 
-  const { kpis, attentionOrders, stockWarnings, ordersByStatus, machineSummary } = data || {
+  const { kpis, attentionOrders, stockWarnings, ordersByStatus, machineSummary, recentActivity = [] } = data || {
     kpis: { activeOrders: 0, completedOrders: 0, delayedOrders: 0, atRiskOrders: 0, machines: { available: 0, running: 0, maintenance: 0, total: 0 }, stock: { outOfStock: 0, lowStock: 0 } },
     attentionOrders: [],
     stockWarnings: [],
     ordersByStatus: [],
     machineSummary: [],
+    recentActivity: [],
   };
 
   const chartColors = {
@@ -83,7 +91,7 @@ export const Dashboard = () => {
             Plant Operations Telemetry
           </h1>
           <p className="text-sm text-slate-600 mt-1">
-            Live manufacturing orders, active looms, spindle workcenters, and raw fiber stock levels.
+            Live manufacturing orders, active looms, spindle workcenters, raw fiber stock, and stage quality gates.
           </p>
         </div>
         <button
@@ -96,25 +104,27 @@ export const Dashboard = () => {
         </button>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+      {/* KPI Cards Grid (5-column or responsive grid including Quality Alerts tile) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        {/* Active Orders */}
         <div className="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-xs hover:shadow-sm transition-all">
           <div className="flex items-center justify-between text-slate-600 mb-3">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Active Work Orders</span>
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Active Orders</span>
             <div className="p-2 rounded-xl bg-teal-50 text-teal-600 border border-teal-200">
               <TrendingUp className="w-4 h-4" />
             </div>
           </div>
           <div className="text-3xl font-bold text-slate-900 font-mono">{formatNumber(kpis.activeOrders)}</div>
-          <div className="flex items-center gap-2 mt-3 text-xs text-slate-600">
+          <div className="flex items-center gap-1.5 mt-3 text-xs text-slate-600 truncate">
             <span className="text-emerald-700 font-semibold">{kpis.onTrackOrders || 0} on track</span>
             <span>•</span>
-            <span className="text-slate-500">{kpis.totalOrders} total in system</span>
+            <span className="text-slate-500">{kpis.totalOrders} total</span>
           </div>
         </div>
 
         <div className="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-xs hover:shadow-sm transition-all">
           <div className="flex items-center justify-between text-slate-600 mb-3">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Delivery Risk Orders</span>
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Delivery Risk</span>
             <div className="p-2 rounded-xl bg-rose-50 text-rose-600 border border-rose-200">
               <AlertOctagon className="w-4 h-4" />
             </div>
@@ -122,25 +132,46 @@ export const Dashboard = () => {
           <div className="text-3xl font-bold text-rose-600 font-mono">
             {formatNumber((kpis.delayedOrders || 0) + (kpis.atRiskOrders || 0))}
           </div>
-          <div className="flex items-center gap-2 mt-3 text-xs">
+          <div className="flex items-center gap-1.5 mt-3 text-xs">
             <span className="text-rose-700 font-semibold">{kpis.delayedOrders || 0} Overdue</span>
             <span className="text-slate-400">•</span>
-            <span className="text-amber-700 font-semibold">{kpis.atRiskOrders || 0} At Risk</span>
+            <span className="text-amber-700 font-semibold">{kpis.atRiskOrders || 0} Risk</span>
           </div>
         </div>
 
+        {/* Quality Alerts Tile (Module 4) */}
+        <Link
+          to="/quality"
+          className="bg-white border border-slate-200/90 hover:border-rose-300 rounded-2xl p-5 shadow-xs hover:shadow-sm transition-all group block"
+        >
+          <div className="flex items-center justify-between text-slate-600 mb-3">
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-500 group-hover:text-rose-600 transition-colors">
+              Quality Alerts
+            </span>
+            <div className="p-2 rounded-xl bg-rose-50 text-rose-600 border border-rose-200 group-hover:bg-rose-100 transition-colors">
+              <ShieldAlert className="w-4 h-4" />
+            </div>
+          </div>
+          <div className="text-3xl font-bold text-rose-600 font-mono">{formatNumber(qualityAlertsCount)}</div>
+          <div className="flex items-center gap-1 mt-3 text-xs text-teal-700 font-semibold group-hover:underline">
+            <span>Open Control Tower</span>
+            <ArrowUpRight className="w-3.5 h-3.5" />
+          </div>
+        </Link>
+
+        {/* Machines Available vs Running */}
         <div className="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-xs hover:shadow-sm transition-all">
           <div className="flex items-center justify-between text-slate-600 mb-3">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Machine Utilization</span>
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Looms / Machines</span>
             <div className="p-2 rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-200">
               <Cpu className="w-4 h-4" />
             </div>
           </div>
           <div className="text-3xl font-bold text-slate-900 font-mono">
-            {kpis.machines.running} <span className="text-sm font-normal text-slate-500">/ {kpis.machines.total} busy</span>
+            {kpis.machines.running} <span className="text-xs font-normal text-slate-500">/ {kpis.machines.total} busy</span>
           </div>
-          <div className="flex items-center gap-2 mt-3 text-xs text-slate-600">
-            <span className="text-emerald-700 font-semibold">{kpis.machines.available} available</span>
+          <div className="flex items-center gap-1.5 mt-3 text-xs text-slate-600 truncate">
+            <span className="text-emerald-700 font-semibold">{kpis.machines.available} avail</span>
             <span>•</span>
             <span className="text-amber-700 font-semibold">{kpis.machines.maintenance} maint</span>
           </div>
@@ -148,7 +179,7 @@ export const Dashboard = () => {
 
         <div className="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-xs hover:shadow-sm transition-all">
           <div className="flex items-center justify-between text-slate-600 mb-3">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Stock Critical Warnings</span>
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Stock Warnings</span>
             <div className="p-2 rounded-xl bg-amber-50 text-amber-600 border border-amber-200">
               <Boxes className="w-4 h-4" />
             </div>
@@ -156,10 +187,10 @@ export const Dashboard = () => {
           <div className="text-3xl font-bold text-amber-600 font-mono">
             {formatNumber((kpis.stock.outOfStock || 0) + (kpis.stock.lowStock || 0))}
           </div>
-          <div className="flex items-center gap-2 mt-3 text-xs">
-            <span className="text-rose-700 font-semibold">{kpis.stock.outOfStock || 0} Out of Stock</span>
+          <div className="flex items-center gap-1.5 mt-3 text-xs">
+            <span className="text-rose-700 font-semibold">{kpis.stock.outOfStock || 0} Out</span>
             <span className="text-slate-400">•</span>
-            <span className="text-amber-700 font-semibold">{kpis.stock.lowStock || 0} Low Stock</span>
+            <span className="text-amber-700 font-semibold">{kpis.stock.lowStock || 0} Low</span>
           </div>
         </div>
       </div>
@@ -363,6 +394,56 @@ export const Dashboard = () => {
             </div>
           )}
         </div>
+      </div>
+
+      {/* Bottom Section: Real Server-Side Recent Activity Ledger */}
+      <div className="bg-white border border-slate-200/90 rounded-2xl p-6 shadow-sm">
+        <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
+          <div className="flex items-center gap-2">
+            <ClipboardCheck className="w-5 h-5 text-teal-600" />
+            <div>
+              <h2 className="font-bold text-slate-900 text-base">Recent Activity & Audit Feed</h2>
+              <p className="text-xs text-slate-500">Live operational ledger of material movements, inspections, and dispatches with authenticated actors</p>
+            </div>
+          </div>
+          <span className="text-xs font-mono font-semibold text-slate-500">
+            {recentActivity.length} Events Logged
+          </span>
+        </div>
+
+        {recentActivity.length === 0 ? (
+          <div className="py-8 text-center text-xs text-slate-500">
+            No operational events logged yet. Stock movements and inspections will appear here in real-time.
+          </div>
+        ) : (
+          <div className="divide-y divide-slate-100">
+            {recentActivity.map((act) => (
+              <div key={act.id} className="py-3.5 first:pt-0 last:pb-0 flex items-start justify-between gap-4 text-xs">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-semibold text-slate-900">{act.title}</span>
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                      act.badge === 'RECEIVE' || act.badge === 'PASS' || act.badge === 'DISPATCHED'
+                        ? 'bg-emerald-100 text-emerald-800'
+                        : act.badge === 'USE' || act.badge === 'ORDER_DEDUCT'
+                        ? 'bg-blue-100 text-blue-800'
+                        : act.badge === 'REWORK' || act.badge === 'ADJUST'
+                        ? 'bg-amber-100 text-amber-800'
+                        : 'bg-rose-100 text-rose-800'
+                    }`}>
+                      {act.badge}
+                    </span>
+                  </div>
+                  <p className="text-slate-600 text-[11px]">{act.description}</p>
+                </div>
+                <div className="text-right flex-shrink-0">
+                  <span className="font-medium text-slate-700 block text-[11px]">{act.actor}</span>
+                  <span className="text-slate-500 text-[10px]">{formatDate(act.timestamp)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

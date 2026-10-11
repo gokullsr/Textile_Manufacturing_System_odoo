@@ -1,11 +1,81 @@
 /**
- * Utility module for generating Fabric Passport URLs for QR codes.
- * Supports Online Public HTTPS tunnels, LAN network addresses, and custom domains.
+ * Utility module for generating Fabric Passport QR Code content.
+ * Supports:
+ * 1. Direct Item Information (Text): Scans directly to item specifications & details on any camera/scanner WITHOUT opening a website.
+ * 2. Structured JSON Spec: For industrial handheld scanners and ERP systems.
+ * 3. Canonical Web URL: For browser navigation when explicitly desired.
  */
 
 // Fallback Online Tunnel and LAN IP
 export const DEFAULT_ONLINE_URL = 'https://approximate-nor-detailed-costa.trycloudflare.com';
 export const DEFAULT_LAN_IP = '172.17.51.121';
+
+/**
+ * Builds human-readable item detail text for the QR code.
+ * When scanned by a phone camera or handheld scanner, this displays the roll's
+ * complete specifications, grade, order info, and status without redirecting to a web page.
+ * @param {object} roll - FabricRoll data object
+ * @returns {string} Multi-line formatted specification text
+ */
+export const buildRollInfoText = (roll) => {
+  if (!roll) return '';
+
+  const rollId = roll.rollId || 'UNKNOWN';
+  const orderNumber = roll.order?.orderNumber || 'Unassigned';
+  const buyer = roll.order?.buyer || 'Standard Buyer';
+  const fabricType = roll.order?.fabricType || 'Textile Fabric';
+  const metres = roll.quantityMetres != null
+    ? `${Number(roll.quantityMetres).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 2 })} Metres`
+    : 'N/A';
+  const stage = roll.stage || 'GREY';
+  const quality = roll.qualityStatus || 'PENDING';
+  const dispatch = roll.dispatchStatus || 'NOT_DISPATCHED';
+  const workcenter = roll.machine?.code
+    ? `${roll.machine.code} (${roll.machine.name || ''})`
+    : 'Staging / Manual QA Area';
+
+  const inspectionsCount = roll.inspections?.length || 0;
+  const lastInsp = inspectionsCount > 0 ? roll.inspections[inspectionsCount - 1] : null;
+
+  const lines = [
+    `--- LOOMIQ FABRIC PASSPORT ---`,
+    `Roll ID: ${rollId}`,
+    `Fabric: ${fabricType}`,
+    `Length: ${metres}`,
+    `Quality Gate: ${quality}`,
+    `Current Stage: ${stage}`,
+    `Dispatch State: ${dispatch}`,
+    `Order No: ${orderNumber}`,
+    `Buyer: ${buyer}`,
+    `Workcenter: ${workcenter}`,
+    lastInsp ? `Last QC: ${lastInsp.result} (${lastInsp.defects?.length || 0} defects)` : `Inspections: 0 recorded`,
+    `Traceability: LoomIQ Certified Digital Passport`,
+  ];
+
+  return lines.join('\n');
+};
+
+/**
+ * Builds structured JSON specification for industrial barcode scanners / ERP readers.
+ * @param {object} roll - FabricRoll data object
+ * @returns {string} Compact JSON string
+ */
+export const buildRollJsonSpec = (roll) => {
+  if (!roll) return '{}';
+  return JSON.stringify({
+    passport: 'LoomIQ-FabricRoll',
+    rollId: roll.rollId,
+    fabric: roll.order?.fabricType || 'Textile Fabric',
+    metres: roll.quantityMetres,
+    order: roll.order?.orderNumber || null,
+    buyer: roll.order?.buyer || null,
+    stage: roll.stage,
+    qualityStatus: roll.qualityStatus,
+    dispatchStatus: roll.dispatchStatus,
+    machine: roll.machine?.code || null,
+    inspectionsCount: roll.inspections?.length || 0,
+  }, null, 2);
+};
 
 /**
  * Builds the canonical public URL for a given fabric roll QR passport.

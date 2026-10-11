@@ -1,4 +1,3 @@
-```jsx
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import {
@@ -467,7 +466,7 @@ export const OrderDetail = () => {
         {/* Fabric Specification */}
         <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4">
           <h2 className="font-bold text-slate-900 text-base flex items-center gap-2 pb-3 border-b border-slate-100">
-            <Layers className="w-4 h-4 text-teal-600 />
+            <Layers className="w-4 h-4 text-teal-600" />
             <span>Fabric Specification</span>
           </h2>
 
@@ -755,4 +754,3 @@ export const OrderDetail = () => {
 };
 
 export default OrderDetail;
-```

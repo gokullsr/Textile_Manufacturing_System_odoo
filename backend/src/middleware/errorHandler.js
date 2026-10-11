@@ -15,6 +15,16 @@ const errorHandler = (err, req, res, next) => {
     });
   }
 
+  // Handle CORS policy error
+  if (err.message && err.message.includes('not allowed by CORS policy')) {
+    return res.status(403).json({
+      error: {
+        message: err.message,
+        code: 'CSRF_BLOCKED',
+      },
+    });
+  }
+
   // Handle Mongoose validation errors
   if (err.name === 'ValidationError') {
     const details = Object.values(err.errors).map((e) => e.message);

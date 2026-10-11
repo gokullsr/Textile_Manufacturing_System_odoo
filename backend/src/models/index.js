@@ -7,11 +7,22 @@ const Machine = require('./Machine');
 const FabricRoll = require('./FabricRoll');
 const MaterialStock = require('./MaterialStock');
 const Counter = require('./Counter');
+const { CorrectiveAction } = require('./CorrectiveAction');
+
+const User = require('./User');
+const Session = require('./Session');
+const Invitation = require('./Invitation');
+const MaterialMovement = require('./MaterialMovement');
 
 module.exports = {
   ProductionOrder,
   Machine,
   FabricRoll,
   MaterialStock,
+  MaterialMovement,
   Counter,
+  CorrectiveAction,
+  User,
+  Session,
+  Invitation,
 };

@@ -1,4 +1,3 @@
-```jsx
 import React, { useState, useEffect, useCallback } from 'react';
 import { checkHealth } from '../services/api';
 import StatusCard from '../components/StatusCard';
@@ -319,4 +318,3 @@ export const HealthDashboard = () => {
 };
 
 export default HealthDashboard;
-```

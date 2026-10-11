@@ -1,4 +1,3 @@
-```jsx
 import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { getMachines } from '../services/machineService';
@@ -240,4 +239,3 @@ export const Machines = () => {
 };
 
 export default Machines;
-```

@@ -1,11 +1,13 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useTransition } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import { getRollByRollId, submitInspection, updateDispatchStatus } from '../services/rollService';
+import { qualityService } from '../services/qualityService';
+import { getMachines } from '../services/machineService';
 import StatusBadge from '../components/StatusBadge';
 import LoadingState from '../components/LoadingState';
 import ErrorState from '../components/ErrorState';
-import { buildRollUrl, DEFAULT_LAN_IP, DEFAULT_ONLINE_URL } from '../utils/qrUtils';
+import { buildRollUrl, buildRollInfoText, buildRollJsonSpec, DEFAULT_LAN_IP, DEFAULT_ONLINE_URL } from '../utils/qrUtils';
 import { formatNumber, formatDate } from '../utils/formatters';
 import {
   ArrowLeft,
@@ -28,26 +30,55 @@ import {
   Smartphone,
   Globe,
   Wifi,
+  Plus,
+  Trash2,
+  ChevronRight,
+  Calculator,
+  ArrowRight,
+  ShieldAlert,
+  Info,
 } from 'lucide-react';
+
+const STAGE_CONFIGS = [
+  { code: 'GREY', label: '1. Grey Weave', short: 'Grey', machineType: 'loom / knitting' },
+  { code: 'DYEING', label: '2. Dyeing', short: 'Dyeing', machineType: 'dyeing_vat' },
+  { code: 'FINISHING', label: '3. Finishing', short: 'Finishing', machineType: 'finishing_range' },
+  { code: 'FINAL', label: '4. Final QC', short: 'Final QC', machineType: 'manual table' },
+];
 
 export const Passport = () => {
   const { rollId } = useParams();
   const [roll, setRoll] = useState(null);
+  const [qualityConfig, setQualityConfig] = useState(null);
+  const [allMachines, setAllMachines] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Host configuration state for real-time QR scanning (defaults to online public URL)
-  const [selectedHostMode, setSelectedHostMode] = useState('online'); // 'online' | 'lan' | 'current' | 'custom'
+  // QR Configuration state (Default: 'text' to show item info without opening a website)
+  const [qrContentMode, setQrContentMode] = useState('text'); // 'text' | 'url' | 'json'
+  const [selectedHostMode, setSelectedHostMode] = useState('online');
   const [customHostUrl, setCustomHostUrl] = useState('');
   const [copiedLink, setCopiedLink] = useState(false);
 
-  // Inspection form state
+  // Defect Rows Form State
+  const [defects, setDefects] = useState([]);
   const [inspectionResult, setInspectionResult] = useState('PASS');
   const [defectNotes, setDefectNotes] = useState('');
+  const [overrideReason, setOverrideReason] = useState('');
   const [inspectorName, setInspectorName] = useState('');
   const [inspectionSubmitting, setInspectionSubmitting] = useState(false);
   const [inspectionError, setInspectionError] = useState(null);
   const [inspectionSuccess, setInspectionSuccess] = useState(false);
+
+  // Live Preview State
+  const [preview, setPreview] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+
+  // Advance Stage State
+  const [selectedMachineCode, setSelectedMachineCode] = useState('');
+  const [advanceSubmitting, setAdvanceSubmitting] = useState(false);
+  const [advanceError, setAdvanceError] = useState(null);
+  const [advanceSuccess, setAdvanceSuccess] = useState(false);
 
   // Dispatch action state
   const [dispatchSubmitting, setDispatchSubmitting] = useState(false);
@@ -57,13 +88,21 @@ export const Passport = () => {
   // Custom search box for 404 state
   const [notFoundSearch, setNotFoundSearch] = useState('');
 
-  const fetchPassport = useCallback(async () => {
+  const fetchPassportAndConfig = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await getRollByRollId(rollId);
-      setRoll(res.roll);
+      const [rollRes, cfgRes, machRes] = await Promise.all([
+        getRollByRollId(rollId),
+        qualityService.getConfig().catch(() => null),
+        getMachines().catch(() => ({ machines: [] })),
+      ]);
+      setRoll(rollRes.roll);
+      setQualityConfig(cfgRes);
+      setAllMachines(machRes.machines || []);
       setDefectNotes('');
+      setOverrideReason('');
+      setDefects([]);
     } catch (err) {
       setError(err);
     } finally {
@@ -72,8 +111,43 @@ export const Passport = () => {
   }, [rollId]);
 
   useEffect(() => {
-    fetchPassport();
-  }, [fetchPassport]);
+    fetchPassportAndConfig();
+  }, [fetchPassportAndConfig]);
+
+  // Live debounced preview calculation
+  useEffect(() => {
+    if (!roll || !roll.rollId) return;
+
+    let isMounted = true;
+    const timer = setTimeout(async () => {
+      setPreviewLoading(true);
+      try {
+        const res = await qualityService.previewInspection(roll.rollId, {
+          defects,
+          result: inspectionResult,
+          defectNotes,
+          overrideReason,
+        });
+        if (isMounted) {
+          setPreview(res.preview);
+        }
+      } catch (err) {
+        // Silent catch for preview
+      } finally {
+        if (isMounted) setPreviewLoading(false);
+      }
+    }, 250);
+
+    return () => {
+      isMounted = false;
+      clearTimeout(timer);
+    };
+  }, [roll?.rollId, roll?.stage, defects, inspectionResult, overrideReason, defectNotes]);
+
+  const currentStage = roll?.stage || 'GREY';
+  const stageCatalog = (qualityConfig?.defectCatalog && qualityConfig.defectCatalog[currentStage])
+    ? (currentStage === 'FINAL' ? Object.values(qualityConfig.allDefects || {}) : qualityConfig.defectCatalog[currentStage])
+    : (qualityConfig?.allDefects ? Object.values(qualityConfig.allDefects) : []);
 
   const getActiveQrBaseUrl = () => {
     if (selectedHostMode === 'online') {
@@ -92,14 +166,39 @@ export const Passport = () => {
     return typeof window !== 'undefined' ? window.location.origin : DEFAULT_ONLINE_URL;
   };
 
+  const rollInfoText = roll ? buildRollInfoText(roll) : '';
+  const rollJsonSpec = roll ? buildRollJsonSpec(roll) : '';
   const activeQrUrl = roll ? buildRollUrl(roll.rollId, getActiveQrBaseUrl()) : '';
 
-  const handleCopyLink = () => {
-    if (activeQrUrl) {
-      navigator.clipboard.writeText(activeQrUrl);
+  // Current scannable payload: defaults to human-readable item specifications
+  const activeQrPayload = qrContentMode === 'text'
+    ? rollInfoText
+    : qrContentMode === 'json'
+    ? rollJsonSpec
+    : activeQrUrl;
+
+  const handleCopyPayload = () => {
+    if (activeQrPayload) {
+      navigator.clipboard.writeText(activeQrPayload);
       setCopiedLink(true);
       setTimeout(() => setCopiedLink(false), 2500);
     }
+  };
+
+  // Defect row management
+  const handleAddDefect = () => {
+    const defaultCode = stageCatalog.length > 0 ? stageCatalog[0].code : 'BROKEN_END';
+    setDefects((prev) => [...prev, { code: defaultCode, severity: 'MINOR', quantity: 1 }]);
+  };
+
+  const handleRemoveDefect = (index) => {
+    setDefects((prev) => prev.filter((_, idx) => idx !== index));
+  };
+
+  const handleUpdateDefect = (index, field, val) => {
+    setDefects((prev) =>
+      prev.map((d, idx) => (idx === index ? { ...d, [field]: val } : d))
+    );
   };
 
   const handleInspectionSubmit = async (e) => {
@@ -107,7 +206,7 @@ export const Passport = () => {
 
     if (inspectionResult === 'REJECT') {
       const confirmed = window.confirm(
-        '⚠️ Are you sure you want to REJECT this roll? This flags the material as scrap or quarantine.'
+        '⚠️ Are you sure you want to REJECT this roll at the ' + currentStage + ' gate? This stops the roll from advancing.'
       );
       if (!confirmed) return;
     }
@@ -119,12 +218,16 @@ export const Passport = () => {
     try {
       const payload = {
         result: inspectionResult,
+        defects,
         defectNotes,
+        overrideReason: overrideReason.trim() || undefined,
         inspectorName: inspectorName.trim() || undefined,
       };
       const res = await submitInspection(roll.rollId, payload);
       setRoll(res.roll);
+      setDefects([]);
       setDefectNotes('');
+      setOverrideReason('');
       setInspectionSuccess(true);
       setTimeout(() => setInspectionSuccess(false), 4000);
     } catch (err) {
@@ -134,10 +237,29 @@ export const Passport = () => {
     }
   };
 
+  const handleAdvanceStage = async () => {
+    setAdvanceSubmitting(true);
+    setAdvanceError(null);
+    setAdvanceSuccess(false);
+
+    try {
+      const payload = selectedMachineCode ? { machineCode: selectedMachineCode } : {};
+      const res = await qualityService.advanceStage(roll.rollId, payload);
+      setRoll(res.roll);
+      setSelectedMachineCode('');
+      setAdvanceSuccess(true);
+      setTimeout(() => setAdvanceSuccess(false), 4000);
+    } catch (err) {
+      setAdvanceError(err.message || 'Stage advancement failed');
+    } finally {
+      setAdvanceSubmitting(false);
+    }
+  };
+
   const handleDispatchTransition = async (targetStatus) => {
     if (targetStatus === 'DISPATCHED') {
       const confirmed = window.confirm(
-        '🚚 Are you sure you want to mark this roll as DISPATCHED? This is a terminal state and cannot be undone.'
+        '🚚 Are you sure you want to mark this roll as DISPATCHED? This is a terminal state.'
       );
       if (!confirmed) return;
     }
@@ -162,7 +284,7 @@ export const Passport = () => {
     window.print();
   };
 
-  if (loading) return <LoadingState message={`Accessing Fabric Passport for ${rollId}...`} />;
+  if (loading) return <LoadingState message={`Accessing Stage Quality Passport for ${rollId}...`} />;
 
   // 404 Roll Not Found
   if (error && (error.status === 404 || error.code === 'ROLL_NOT_FOUND')) {
@@ -181,7 +303,6 @@ export const Passport = () => {
           </p>
         </div>
 
-        {/* Quick Search */}
         <div className="bg-white p-4 rounded-2xl border border-slate-200 space-y-3 shadow-xs">
           <label className="block text-xs font-bold text-slate-700 text-left">Search Roll Registry</label>
           <div className="flex gap-2">
@@ -215,50 +336,42 @@ export const Passport = () => {
     );
   }
 
-  // 400 Bad Roll ID Format
-  if (error && (error.status === 400 || error.code === 'INVALID_ROLL_ID_FORMAT')) {
-    return (
-      <div className="max-w-lg mx-auto py-12 px-4 text-center space-y-4">
-        <div className="p-3 rounded-2xl bg-amber-50 text-amber-600 border border-amber-200 inline-block">
-          <AlertTriangle className="w-10 h-10" />
-        </div>
-        <h1 className="text-xl font-bold text-slate-900">Invalid Fabric Roll ID Format</h1>
-        <p className="text-xs font-mono text-amber-800 bg-amber-50 p-2 rounded-lg border border-amber-200">
-          '{rollId}'
-        </p>
-        <p className="text-xs text-slate-600">
-          Roll IDs must be 3-40 uppercase alphanumeric characters (e.g. <code className="text-teal-700 font-bold">FR-2026-000001</code>).
-        </p>
-        <div className="pt-2">
-          <Link to="/rolls" className="text-xs font-semibold text-teal-700 hover:text-teal-800">
-            &larr; Back to registry
-          </Link>
-        </div>
-      </div>
-    );
-  }
-
   if (error) {
-    return <ErrorState title="Failed to load Fabric Passport" error={error} onRetry={fetchPassport} />;
+    return <ErrorState title="Failed to load Fabric Passport" error={error} onRetry={fetchPassportAndConfig} />;
   }
 
   if (!roll) return null;
 
-  const allowed = roll.allowedActions || { canInspect: true, canMarkReady: false, canUnready: false, canDispatch: false };
+  const allowed = roll.allowedActions || {
+    canInspect: true,
+    canAdvance: false,
+    nextStage: null,
+    blockReason: null,
+    canMarkReady: false,
+    canUnready: false,
+    canDispatch: false,
+  };
+
+  // Determine stage gate status for stepper
+  const currentStageIndex = STAGE_CONFIGS.findIndex((s) => s.code === roll.stage);
+  const nextStageInfo = qualityConfig?.stages ? qualityConfig.stages[allowed.nextStage] : null;
+  const allowedNextMachines = nextStageInfo
+    ? allMachines.filter((m) => nextStageInfo.machineTypes?.includes(m.type))
+    : [];
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
-      {/* Printable Label Section (Hidden on Screen, Visible on Print) */}
+      {/* Printable Label Section */}
       <div className="hidden print:block print:p-8 print:text-black print:bg-white text-center space-y-4 font-mono">
-        <h1 className="text-2xl font-bold uppercase tracking-wider">LoomIQ Fabric Roll Passport</h1>
+        <h1 className="text-2xl font-bold uppercase tracking-wider">LoomIQ Stage Quality Passport</h1>
         <div className="flex justify-center my-4">
-          <QRCodeSVG value={activeQrUrl} size={220} level="M" />
+          <QRCodeSVG value={activeQrPayload} size={220} level="M" />
         </div>
         <div className="text-xl font-bold">{roll.rollId}</div>
+        <div className="text-sm">Stage: {roll.stage} | Status: {roll.qualityStatus}</div>
         <div className="text-sm">Order: {roll.order?.orderNumber || 'N/A'} ({roll.order?.buyer || 'Standard'})</div>
-        <div className="text-sm">Machine: {roll.machine?.machineCode || roll.machine?.code || 'N/A'}</div>
         <div className="text-sm">Length: {formatNumber(roll.quantityMetres)} Metres</div>
-        <div className="text-xs text-gray-500 mt-4">Scan QR to view full digital quality audit history on any device</div>
+        <div className="text-xs text-gray-500 mt-4">Scan QR with any phone camera or handheld scanner to view item specifications</div>
       </div>
 
       {/* Screen Navigation */}
@@ -271,13 +384,15 @@ export const Passport = () => {
           <span>Back to Fabric Rolls</span>
         </Link>
 
-        <button
-          onClick={handlePrintLabel}
-          className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold border border-slate-200 shadow-xs transition-all self-start sm:self-center"
-        >
-          <Printer className="w-3.5 h-3.5 text-teal-600" />
-          <span>Print Physical QR Label</span>
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handlePrintLabel}
+            className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold border border-slate-200 shadow-xs transition-all"
+          >
+            <Printer className="w-3.5 h-3.5 text-teal-600" />
+            <span>Print QR Label</span>
+          </button>
+        </div>
       </div>
 
       {/* Main Passport Header Card */}
@@ -289,18 +404,89 @@ export const Passport = () => {
                 <QrCode className="w-7 h-7 text-teal-600" />
                 {roll.rollId}
               </span>
+              <StatusBadge type="stage" value={roll.stage} />
               <StatusBadge type="quality" value={roll.qualityStatus} />
               <StatusBadge type="dispatch" value={roll.dispatchStatus} />
             </div>
             <p className="text-xs text-slate-500 mt-1">
-              Fabric Roll Digital Passport & Live Traceability Audit
+              Deterministic Stage Quality Gate Audit & Digital Fabric Passport
             </p>
           </div>
 
           <div className="flex items-center gap-2">
             <span className="text-xs text-slate-500 font-mono">
-              Registered: {formatDate(roll.createdAt)}
+              Stage Entered: {formatDate(roll.stageEnteredAt || roll.createdAt)}
             </span>
+          </div>
+        </div>
+
+        {/* ========================================================================= */}
+        {/* STAGE GATES STEPPER (GREY -> DYEING -> FINISHING -> FINAL) */}
+        {/* ========================================================================= */}
+        <div className="space-y-3 bg-slate-50 p-4 md:p-5 rounded-2xl border border-slate-200">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold uppercase tracking-wider text-teal-800 flex items-center gap-1.5">
+              <ShieldCheck className="w-4 h-4 text-teal-600" />
+              <span>Production Quality Gates Pipeline</span>
+            </span>
+            <span className="text-[11px] text-slate-500 font-medium">
+              Stage {currentStageIndex + 1} of 4
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+            {STAGE_CONFIGS.map((st, idx) => {
+              const isPast = idx < currentStageIndex;
+              const isCurrent = idx === currentStageIndex;
+              const isFuture = idx > currentStageIndex;
+
+              const stageHist = (roll.stageHistory || []).find((h) => h.stage === st.code);
+              const stageInsp = (roll.inspections || []).find((insp) => insp.stage === st.code);
+
+              let gateBadge = null;
+              if (isPast) {
+                gateBadge = <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md">Passed ✓</span>;
+              } else if (isCurrent) {
+                if (roll.qualityStatus === 'PASS') {
+                  gateBadge = <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md">Gate Passed</span>;
+                } else if (roll.qualityStatus === 'REWORK') {
+                  gateBadge = <span className="text-[10px] font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-md">Rework ↻</span>;
+                } else if (roll.qualityStatus === 'REJECT') {
+                  gateBadge = <span className="text-[10px] font-bold text-rose-700 bg-rose-100 px-2 py-0.5 rounded-md">Rejected ✕</span>;
+                } else {
+                  gateBadge = <span className="text-[10px] font-bold text-slate-700 bg-slate-200 px-2 py-0.5 rounded-md">Pending QC</span>;
+                }
+              } else {
+                gateBadge = <span className="text-[10px] font-medium text-slate-400">Locked</span>;
+              }
+
+              return (
+                <div
+                  key={st.code}
+                  className={`p-3 rounded-xl border transition-all ${
+                    isCurrent
+                      ? 'bg-white border-teal-500 shadow-sm ring-2 ring-teal-500/20'
+                      : isPast
+                      ? 'bg-emerald-50/50 border-emerald-200'
+                      : 'bg-slate-100/70 border-slate-200 opacity-70'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className={`text-xs font-bold ${isCurrent ? 'text-teal-900' : isPast ? 'text-emerald-900' : 'text-slate-600'}`}>
+                      {st.short}
+                    </span>
+                    {gateBadge}
+                  </div>
+
+                  <div className="text-[11px] text-slate-500 font-mono truncate">
+                    Machine: {stageHist?.machineCode || (isCurrent && roll.machine?.code) || '—'}
+                  </div>
+                  <div className="text-[10px] text-slate-400 mt-0.5">
+                    {stageHist?.enteredAt ? formatDate(stageHist.enteredAt) : (isCurrent ? formatDate(roll.stageEnteredAt) : 'Pending')}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
 
@@ -308,24 +494,30 @@ export const Passport = () => {
         {inspectionSuccess && (
           <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center gap-3 text-emerald-800 text-xs font-medium shadow-xs">
             <CheckCircle2 className="w-5 h-5 text-emerald-600 flex-shrink-0" />
-            <span>Inspection result logged successfully! Digital quality passport updated.</span>
+            <span>Inspection recorded successfully! Stage gate verdict and points calculated.</span>
+          </div>
+        )}
+
+        {advanceSuccess && (
+          <div className="p-4 rounded-xl bg-teal-50 border border-teal-200 flex items-center gap-3 text-teal-900 text-xs font-medium shadow-xs">
+            <ArrowRight className="w-5 h-5 text-teal-600 flex-shrink-0" />
+            <span>Fabric roll advanced to next quality stage! Quality status reset to PENDING for the new gate.</span>
           </div>
         )}
 
         {dispatchSuccess && (
-          <div className="p-4 rounded-xl bg-teal-50 border border-teal-200 flex items-center gap-3 text-teal-900 text-xs font-medium shadow-xs">
-            <Truck className="w-5 h-5 text-teal-600 flex-shrink-0" />
+          <div className="p-4 rounded-xl bg-sky-50 border border-sky-200 flex items-center gap-3 text-sky-900 text-xs font-medium shadow-xs">
+            <Truck className="w-5 h-5 text-sky-600 flex-shrink-0" />
             <span>Dispatch status updated successfully!</span>
           </div>
         )}
 
-        {/* 2-Column Passport Layout (Traceability Info + QR Code Card) */}
+        {/* Traceability & QR Info */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left 2 Cols: Traceability Matrix */}
           <div className="lg:col-span-2 space-y-4">
             <h2 className="text-xs font-bold uppercase tracking-wider text-teal-700 flex items-center gap-2">
               <Layers className="w-4 h-4" />
-              <span>Manufacturing Traceability</span>
+              <span>Production Origin & Specifications</span>
             </h2>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
@@ -348,12 +540,12 @@ export const Passport = () => {
               </div>
 
               <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200">
-                <span className="text-slate-500 block">Assigned Loom / Station</span>
+                <span className="text-slate-500 block">Current Stage Workcenter</span>
                 <span className="font-mono font-bold text-slate-900 text-sm block mt-0.5">
-                  {roll.machine?.machineCode || roll.machine?.code || '—'}
+                  {roll.machine?.machineCode || roll.machine?.code || 'None (Manual QA)'}
                 </span>
                 <span className="text-[11px] text-slate-500 block truncate mt-0.5">
-                  {roll.machine?.name || 'Standard Loom'} ({roll.machine?.type?.replace('_', ' ')})
+                  {roll.machine?.name || 'Inspection Staging'} ({roll.machine?.type || 'table'})
                 </span>
               </div>
 
@@ -372,119 +564,204 @@ export const Passport = () => {
               </div>
             </div>
 
-            {/* Latest Inspection Assessment */}
-            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-700 font-bold">Latest Inspection Note</span>
-                <span className="text-[11px] text-slate-500">
-                  {roll.inspectedAt ? formatDate(roll.inspectedAt) : 'Pending Inspection'}
-                </span>
+            {/* Advance Stage Card */}
+            {roll.stage !== 'FINAL' && roll.dispatchStatus !== 'DISPATCHED' && (
+              <div className="bg-teal-50/70 p-4 rounded-xl border border-teal-200 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <ArrowRight className="w-4 h-4 text-teal-700" />
+                    <span className="text-xs font-bold text-teal-900">
+                      Stage Gate Advancement: {currentStage} → {allowed.nextStage || 'Next Stage'}
+                    </span>
+                  </div>
+                  {allowed.canAdvance ? (
+                    <span className="text-[10px] font-bold text-emerald-800 bg-emerald-200/80 px-2 py-0.5 rounded-md">
+                      Eligible to Advance
+                    </span>
+                  ) : (
+                    <span className="text-[10px] font-bold text-amber-800 bg-amber-200/80 px-2 py-0.5 rounded-md">
+                      Gate Blocked
+                    </span>
+                  )}
+                </div>
+
+                {advanceError && (
+                  <div className="p-2.5 rounded-lg bg-rose-100 border border-rose-200 text-xs text-rose-800 flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 text-rose-600 flex-shrink-0" />
+                    <span>{advanceError}</span>
+                  </div>
+                )}
+
+                {!allowed.canAdvance ? (
+                  <p className="text-xs text-amber-900">
+                    ⚠️ <strong>Block Reason:</strong> {allowed.blockReason || 'Inspection with PASS verdict required to unlock next stage.'}
+                  </p>
+                ) : (
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-1">
+                    {allowedNextMachines.length > 0 && (
+                      <div className="flex-1">
+                        <label className="block text-[11px] font-bold text-teal-900 mb-1">
+                          Assign {allowed.nextStage} Workcenter <span className="text-rose-500">*</span>
+                        </label>
+                        <select
+                          value={selectedMachineCode}
+                          onChange={(e) => setSelectedMachineCode(e.target.value)}
+                          className="w-full px-3 py-1.5 bg-white border border-teal-300 rounded-lg text-xs font-semibold text-slate-800 focus:outline-none focus:border-teal-600"
+                        >
+                          <option value="">-- Select Workcenter ({nextStageInfo?.machineTypes?.join(', ')}) --</option>
+                          {allowedNextMachines.map((m) => (
+                            <option key={m.code} value={m.code}>
+                              {m.code} - {m.name} ({m.type})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={handleAdvanceStage}
+                      disabled={advanceSubmitting || (allowedNextMachines.length > 0 && !selectedMachineCode)}
+                      className="px-5 py-2.5 bg-teal-700 hover:bg-teal-800 text-white font-bold text-xs rounded-xl shadow-xs disabled:opacity-50 transition-all self-end sm:self-auto inline-flex items-center gap-2"
+                    >
+                      <ArrowRight className="w-4 h-4" />
+                      <span>{advanceSubmitting ? 'Advancing Stage...' : `Advance to ${allowed.nextStage}`}</span>
+                    </button>
+                  </div>
+                )}
               </div>
-              <p className="text-xs text-slate-700 italic">
-                {roll.defectNotes ? `"${roll.defectNotes}"` : 'No quality defects or remarks logged.'}
-              </p>
-            </div>
+            )}
           </div>
 
-          {/* Right 1 Col: Real-Time Scannable QR Identity Card */}
+          {/* Scannable QR Identity Card */}
           <div className="bg-slate-50 p-6 rounded-2xl border border-slate-200 flex flex-col items-center justify-center text-center space-y-4 shadow-2xs">
             <div className="flex items-center justify-between w-full">
               <span className="text-[11px] font-bold uppercase tracking-wider text-teal-700 flex items-center gap-1.5">
                 <Smartphone className="w-3.5 h-3.5" />
-                <span>Live Scannable QR</span>
+                <span>Fabric Passport QR</span>
               </span>
-              <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
-                Real-Time
+              <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full border ${
+                qrContentMode === 'text'
+                  ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                  : 'bg-teal-100 text-teal-800 border-teal-300'
+              }`}>
+                {qrContentMode === 'text' ? 'Direct Info (No Redirect)' : qrContentMode === 'json' ? 'JSON Spec' : 'Web Link'}
               </span>
             </div>
 
-            {/* High-Contrast Crisp QR SVG */}
+            {/* QR Content Mode Switcher Tabs */}
+            <div className="w-full flex p-1 bg-slate-200/80 rounded-xl text-[11px] font-semibold gap-1">
+              <button
+                type="button"
+                onClick={() => setQrContentMode('text')}
+                className={`flex-1 py-1.5 px-2 rounded-lg transition-all ${
+                  qrContentMode === 'text'
+                    ? 'bg-white text-teal-800 shadow-xs font-bold'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Item Info
+              </button>
+              <button
+                type="button"
+                onClick={() => setQrContentMode('url')}
+                className={`flex-1 py-1.5 px-2 rounded-lg transition-all ${
+                  qrContentMode === 'url'
+                    ? 'bg-white text-teal-800 shadow-xs font-bold'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Web Link
+              </button>
+              <button
+                type="button"
+                onClick={() => setQrContentMode('json')}
+                className={`flex-1 py-1.5 px-2 rounded-lg transition-all ${
+                  qrContentMode === 'json'
+                    ? 'bg-white text-teal-800 shadow-xs font-bold'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                JSON Data
+              </button>
+            </div>
+
+            {/* QR SVG */}
             <div className="p-3.5 bg-white rounded-2xl shadow-xs border border-slate-200 inline-block">
-              <QRCodeSVG
-                value={activeQrUrl}
-                size={165}
-                level="Q"
-                includeMargin={false}
-              />
+              <QRCodeSVG value={activeQrPayload} size={175} level="M" includeMargin={false} />
             </div>
 
-            {/* Network / Host Switcher for Scanning */}
             <div className="w-full space-y-2 text-left">
-              <div className="flex items-center justify-between text-[11px]">
-                <span className="font-bold text-slate-700">QR Target URL:</span>
+              {qrContentMode === 'text' ? (
+                <p className="text-[11px] text-emerald-800 bg-emerald-50 border border-emerald-200 p-2 rounded-xl flex items-start gap-1.5">
+                  <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-emerald-600" />
+                  <span>
+                    <strong>Direct Item Info Active:</strong> Scanning this QR directly displays the item details on any phone camera without opening a webpage.
+                  </span>
+                </p>
+              ) : qrContentMode === 'url' ? (
+                <div className="space-y-2">
+                  <div className="flex gap-1 text-[10px]">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedHostMode('online')}
+                      className={`flex-1 py-1 px-2 rounded-lg font-bold border transition-all flex items-center justify-center gap-1 ${
+                        selectedHostMode === 'online'
+                          ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
+                          : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      <Globe className="w-3 h-3" />
+                      <span>Live Online</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedHostMode('lan')}
+                      className={`py-1 px-2 rounded-lg font-semibold border transition-all flex items-center justify-center gap-1 ${
+                        selectedHostMode === 'lan'
+                          ? 'bg-teal-600 text-white border-teal-600 shadow-2xs'
+                          : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      <Wifi className="w-3 h-3" />
+                      <span>Wi-Fi</span>
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {/* Payload Preview */}
+              <div className="flex items-center justify-between text-[11px] pt-1">
+                <span className="font-bold text-slate-700">Scanner Content:</span>
                 <button
-                  onClick={handleCopyLink}
-                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-teal-700 hover:text-teal-800"
+                  onClick={handleCopyPayload}
+                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-teal-700 hover:text-teal-800 cursor-pointer"
                 >
                   <Copy className="w-3 h-3" />
-                  <span>{copiedLink ? 'Copied!' : 'Copy Link'}</span>
+                  <span>{copiedLink ? 'Copied!' : 'Copy Info'}</span>
                 </button>
               </div>
 
-              <div className="text-[10px] font-mono text-slate-800 bg-white p-2 rounded-xl border border-slate-200 break-all select-all shadow-2xs">
-                {activeQrUrl}
-              </div>
-
-              {/* Host Selector Toggle */}
-              <div className="pt-1 space-y-2">
-                <div className="flex gap-1 text-[10px]">
-                  <button
-                    type="button"
-                    onClick={() => setSelectedHostMode('online')}
-                    className={`flex-1 py-1.5 px-2 rounded-lg font-bold border transition-all flex items-center justify-center gap-1 ${
-                      selectedHostMode === 'online'
-                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
-                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
-                    }`}
-                    title="Accessible globally from any phone, cellular data, or remote network"
-                  >
-                    <Globe className="w-3 h-3" />
-                    <span>Live Online (Any Device)</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedHostMode('lan')}
-                    className={`py-1.5 px-2 rounded-lg font-semibold border transition-all flex items-center justify-center gap-1 ${
-                      selectedHostMode === 'lan'
-                        ? 'bg-teal-600 text-white border-teal-600 shadow-2xs'
-                        : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
-                    }`}
-                    title="Accessible by devices on the local Wi-Fi"
-                  >
-                    <Wifi className="w-3 h-3" />
-                    <span>Wi-Fi</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedHostMode('current')}
-                    className={`py-1.5 px-2 rounded-lg font-semibold border transition-all ${
-                      selectedHostMode === 'current'
-                        ? 'bg-teal-600 text-white border-teal-600 shadow-2xs'
-                        : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
-                    }`}
-                    title="Localhost only"
-                  >
-                    Local
-                  </button>
-                </div>
-
-                <p className="text-[10px] text-slate-500 leading-tight">
-                  📱 <strong>Scan from Any Device Online:</strong> Scan with your phone camera on <strong>cellular 4G/5G or any Wi-Fi</strong>. It directly opens this live fabric roll record with real-time quality & dispatch controls!
-                </p>
+              <div className="text-[10px] font-mono text-slate-800 bg-white p-2.5 rounded-xl border border-slate-200 max-h-32 overflow-y-auto whitespace-pre-wrap break-all shadow-2xs">
+                {activeQrPayload}
               </div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Interactive Operations: Quality Inspection & Dispatch Transitions */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 print:hidden">
-        {/* Left Col: Quality Inspection Form */}
-        <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4">
+      {/* ========================================================================= */}
+      {/* STAGE INSPECTION FORM & LIVE VERDICT EXPLAINER PANEL */}
+      {/* ========================================================================= */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 print:hidden">
+        {/* Left 7 Cols: Defect Recording & Verdict Selector Form */}
+        <div className="lg:col-span-7 bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-5">
           <div className="flex items-center justify-between pb-3 border-b border-slate-100">
             <div className="flex items-center gap-2">
               <ShieldCheck className="w-5 h-5 text-teal-600" />
-              <h2 className="font-bold text-slate-900 text-base">Quality Inspection</h2>
+              <h2 className="font-bold text-slate-900 text-base">
+                Inspect Stage Gate: <span className="text-teal-700 font-mono">{currentStage}</span>
+              </h2>
             </div>
             <StatusBadge type="quality" value={roll.qualityStatus} />
           </div>
@@ -493,7 +770,7 @@ export const Passport = () => {
             <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600 flex items-center gap-2">
               <Clock className="w-4 h-4 text-sky-600 flex-shrink-0" />
               <span>
-                Roll is <strong>DISPATCHED</strong>. Quality state is locked and cannot be re-inspected.
+                Roll is <strong>{roll.dispatchStatus === 'DISPATCHED' ? 'DISPATCHED' : 'REJECTED'}</strong>. Quality inspection is locked.
               </span>
             </div>
           ) : (
@@ -505,10 +782,99 @@ export const Passport = () => {
                 </div>
               )}
 
-              {/* 3 Labeled Outcome Options */}
+              {/* Defect Item Rows */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-700">
+                    Recorded Defect Catalog Items ({defects.length})
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleAddDefect}
+                    className="inline-flex items-center gap-1 text-xs font-bold text-teal-700 hover:text-teal-800 bg-teal-50 px-2.5 py-1 rounded-lg border border-teal-200"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add Defect</span>
+                  </button>
+                </div>
+
+                {defects.length === 0 ? (
+                  <div className="p-3.5 rounded-xl bg-slate-50 border border-dashed border-slate-300 text-center text-xs text-slate-500">
+                    No defects added yet. Fabric is assessed as zero-defect clean.
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                    {defects.map((def, idx) => (
+                      <div
+                        key={idx}
+                        className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex flex-col sm:flex-row gap-2 items-start sm:items-center text-xs"
+                      >
+                        {/* Defect Code Select */}
+                        <div className="flex-1 w-full">
+                          <select
+                            value={def.code}
+                            onChange={(e) => handleUpdateDefect(idx, 'code', e.target.value)}
+                            className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-800 focus:outline-none focus:border-teal-600"
+                          >
+                            {stageCatalog.map((cat) => (
+                              <option key={cat.code} value={cat.code}>
+                                {cat.label} ({cat.code})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {/* Severity Select */}
+                        <div className="w-28">
+                          <select
+                            value={def.severity}
+                            onChange={(e) => handleUpdateDefect(idx, 'severity', e.target.value)}
+                            className={`w-full px-2 py-1.5 rounded-lg text-xs font-bold border focus:outline-none ${
+                              def.severity === 'CRITICAL'
+                                ? 'bg-rose-50 text-rose-700 border-rose-300'
+                                : def.severity === 'MAJOR'
+                                ? 'bg-amber-50 text-amber-700 border-amber-300'
+                                : 'bg-slate-100 text-slate-700 border-slate-300'
+                            }`}
+                          >
+                            <option value="MINOR">MINOR (1 pt)</option>
+                            <option value="MAJOR">MAJOR (3 pts)</option>
+                            <option value="CRITICAL">CRITICAL (5 pts)</option>
+                          </select>
+                        </div>
+
+                        {/* Quantity */}
+                        <div className="w-20 flex items-center gap-1">
+                          <input
+                            type="number"
+                            min="1"
+                            max="999"
+                            value={def.quantity}
+                            onChange={(e) => handleUpdateDefect(idx, 'quantity', parseInt(e.target.value, 10) || 1)}
+                            className="w-full px-2 py-1.5 bg-white border border-slate-300 rounded-lg text-xs text-center font-bold text-slate-800 focus:outline-none focus:border-teal-600"
+                          />
+                          <span className="text-[10px] text-slate-400">qty</span>
+                        </div>
+
+                        {/* Remove Button */}
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveDefect(idx)}
+                          className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors"
+                          title="Remove defect"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Inspector Result Decision */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-2">
-                  Inspection Grade Decision <span className="text-rose-500">*</span>
+                  Final Inspector Verdict Decision <span className="text-rose-500">*</span>
                 </label>
                 <div className="grid grid-cols-3 gap-2">
                   <button
@@ -549,13 +915,35 @@ export const Passport = () => {
                 </div>
               </div>
 
+              {/* Lenient Override Reason Field (Appears conditionally) */}
+              {preview?.requiresOverrideReason && (
+                <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-300 space-y-2">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-amber-900">
+                    <ShieldAlert className="w-4 h-4 text-amber-700" />
+                    <span>Lenient Override Justification Required (≥ 10 characters)</span>
+                  </div>
+                  <p className="text-[11px] text-amber-800">
+                    Your chosen verdict (<strong>{inspectionResult}</strong>) is more lenient than the calculated recommendation (<strong>{preview?.recommendedResult}</strong>). Factory SOP requires entering a formal justification reason.
+                  </p>
+                  <textarea
+                    rows="2"
+                    maxLength={300}
+                    value={overrideReason}
+                    onChange={(e) => setOverrideReason(e.target.value)}
+                    placeholder="Enter formal reason (e.g. Concession waiver approved by buyer QA manager under #WAIV-2026-04)..."
+                    required
+                    className="w-full px-3 py-2 bg-white border border-amber-300 rounded-lg text-xs text-slate-900 focus:outline-none focus:border-amber-600 font-medium"
+                  />
+                </div>
+              )}
+
               {/* Defect Notes with Counter */}
               <div>
                 <div className="flex justify-between items-center mb-1">
                   <label className="text-xs font-bold text-slate-700">
                     Defect Notes & Observations{' '}
                     {(inspectionResult === 'REWORK' || inspectionResult === 'REJECT') && (
-                      <span className="text-rose-500 font-bold">* (Required)</span>
+                      <span className="text-rose-500 font-bold">* (Required for REWORK/REJECT)</span>
                     )}
                   </label>
                   <span className="text-[11px] font-mono text-slate-400">
@@ -563,7 +951,7 @@ export const Passport = () => {
                   </span>
                 </div>
                 <textarea
-                  rows="3"
+                  rows="2"
                   maxLength={500}
                   value={defectNotes}
                   onChange={(e) => setDefectNotes(e.target.value)}
@@ -595,105 +983,171 @@ export const Passport = () => {
               <div className="pt-1 flex justify-end">
                 <button
                   type="submit"
-                  disabled={inspectionSubmitting}
+                  disabled={inspectionSubmitting || (preview?.requiresOverrideReason && overrideReason.trim().length < 10)}
                   className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-semibold shadow-sm disabled:opacity-50 transition-all"
                 >
                   <Send className="w-3.5 h-3.5" />
-                  <span>{inspectionSubmitting ? 'Recording Audit...' : 'Submit Quality Inspection'}</span>
+                  <span>{inspectionSubmitting ? 'Recording Inspection...' : `Certify ${currentStage} Gate`}</span>
                 </button>
               </div>
             </form>
           )}
         </div>
 
-        {/* Right Col: Dispatch Management */}
-        <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4 flex flex-col justify-between">
-          <div>
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+        {/* Right 5 Cols: Live Recommended Verdict & Explainability Calculation Trace */}
+        <div className="lg:col-span-5 bg-slate-900 text-white rounded-2xl p-6 shadow-md space-y-4 flex flex-col justify-between">
+          <div className="space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
               <div className="flex items-center gap-2">
-                <Truck className="w-5 h-5 text-teal-600" />
-                <h2 className="font-bold text-slate-900 text-base">Dispatch Lifecycle</h2>
+                <Calculator className="w-5 h-5 text-teal-400" />
+                <h3 className="font-bold text-white text-sm">Deterministic Verdict Engine</h3>
               </div>
-              <StatusBadge type="dispatch" value={roll.dispatchStatus} />
+              <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-teal-900/60 text-teal-300 border border-teal-700/50">
+                Live Preview
+              </span>
             </div>
 
-            {dispatchError && (
-              <div className="mt-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 text-rose-600 flex-shrink-0" />
-                <span>{dispatchError}</span>
+            {/* Verdict Card */}
+            <div className="p-4 rounded-xl bg-slate-800/80 border border-slate-700 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-slate-400">Calculated Recommendation:</span>
+                <span
+                  className={`text-xs font-bold px-2.5 py-0.5 rounded-full border ${
+                    preview?.recommendedResult === 'PASS'
+                      ? 'bg-emerald-950 text-emerald-300 border-emerald-700'
+                      : preview?.recommendedResult === 'REWORK'
+                      ? 'bg-amber-950 text-amber-300 border-amber-700'
+                      : 'bg-rose-950 text-rose-300 border-rose-700'
+                  }`}
+                >
+                  {preview?.recommendedResult || 'PASS'}
+                </span>
               </div>
-            )}
 
-            <div className="mt-4 space-y-3 text-xs">
-              <p className="text-slate-600">
-                Dispatch progression is strictly gated by Quality Assurance. Only rolls with verified <strong>PASS</strong> status can be staged in packaging or dispatched to buyers.
-              </p>
-
-              {roll.qualityStatus !== 'PASS' && (
-                <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 flex items-start gap-2">
-                  <AlertTriangle className="w-4 h-4 flex-shrink-0 text-amber-600 mt-0.5" />
-                  <span>
-                    Dispatch actions locked: Current quality status is <strong>{roll.qualityStatus}</strong>.
+              <div className="grid grid-cols-2 gap-2 pt-1 text-xs">
+                <div className="bg-slate-900/70 p-2.5 rounded-lg">
+                  <span className="text-[11px] text-slate-400 block">Total Defect Points</span>
+                  <span className="text-base font-bold font-mono text-white">
+                    {preview?.defectPoints !== undefined ? preview.defectPoints : 0} pts
                   </span>
+                </div>
+                <div className="bg-slate-900/70 p-2.5 rounded-lg">
+                  <span className="text-[11px] text-slate-400 block">Points per 100m</span>
+                  <span className="text-base font-bold font-mono text-teal-300">
+                    {preview?.pointsPer100m !== undefined ? preview.pointsPer100m : 0} <span className="text-[10px] font-normal text-slate-400">pts/100m</span>
+                  </span>
+                </div>
+              </div>
+
+              {/* Thresholds Reference */}
+              <div className="text-[11px] text-slate-400 flex items-center justify-between pt-1 font-mono">
+                <span>Pass ≤ {preview?.passMax || 20} pts/100m</span>
+                <span>Rework ≤ {preview?.reworkMax || 40} pts/100m</span>
+              </div>
+            </div>
+
+            {/* Explanation Trace */}
+            <div className="space-y-2">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                <Info className="w-3.5 h-3.5 text-teal-400" />
+                <span>Explainable Calculation Steps</span>
+              </span>
+
+              {preview?.calculation ? (
+                <div className="space-y-1.5 font-mono text-[11px]">
+                  {preview.calculation.map((step, sIdx) => (
+                    <div key={sIdx} className="bg-slate-800/60 p-2 rounded-lg border border-slate-700/50 space-y-0.5">
+                      <div className="text-slate-400 text-[10px]">{step.label}</div>
+                      <div className="text-slate-300 text-[10px] break-all">{step.expression}</div>
+                      <div className="text-teal-300 font-bold">{step.result}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-xs text-slate-500 italic py-2">
+                  Add defects to inspect live mathematical calculations.
                 </div>
               )}
             </div>
           </div>
 
-          {/* Action Buttons */}
-          <div className="space-y-2.5 pt-4 border-t border-slate-100">
-            {/* Mark Ready */}
-            {allowed.canMarkReady && (
-              <button
-                onClick={() => handleDispatchTransition('READY_FOR_DISPATCH')}
-                disabled={dispatchSubmitting}
-                className="w-full py-2.5 px-4 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-semibold text-xs shadow-sm transition-all disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                <CheckCircle2 className="w-4 h-4" />
-                <span>Mark Ready for Dispatch</span>
-              </button>
-            )}
-
-            {/* Undo Ready */}
-            {allowed.canUnready && (
-              <button
-                onClick={() => handleDispatchTransition('NOT_DISPATCHED')}
-                disabled={dispatchSubmitting}
-                className="w-full py-2.5 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs border border-slate-200 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                <RotateCcw className="w-4 h-4" />
-                <span>Undo Ready Status</span>
-              </button>
-            )}
-
-            {/* Mark Dispatched */}
-            {allowed.canDispatch && (
-              <button
-                onClick={() => handleDispatchTransition('DISPATCHED')}
-                disabled={dispatchSubmitting}
-                className="w-full py-2.5 px-4 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-semibold text-xs shadow-sm transition-all disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                <Truck className="w-4 h-4" />
-                <span>Mark Dispatched (Ship to Buyer)</span>
-              </button>
-            )}
-
-            {roll.dispatchStatus === 'DISPATCHED' && (
-              <div className="py-2.5 px-4 rounded-xl bg-sky-50 border border-sky-200 text-center text-xs text-sky-800 font-semibold flex items-center justify-center gap-2">
-                <Truck className="w-4 h-4" />
-                <span>Fabric Roll Shipped ({formatDate(roll.dispatchedAt)})</span>
-              </div>
-            )}
+          <div className="pt-3 border-t border-slate-800 text-[11px] text-slate-400">
+            {preview?.explanation || 'Fabric meets standard thresholds. Safe to certify gate.'}
           </div>
         </div>
       </div>
 
-      {/* Quality Inspection Audit Timeline */}
+      {/* ========================================================================= */}
+      {/* DISPATCH LIFECYCLE CONTROLS */}
+      {/* ========================================================================= */}
+      {roll.stage === 'FINAL' && (
+        <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm print:hidden space-y-4">
+          <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+            <div className="flex items-center gap-2">
+              <Truck className="w-5 h-5 text-teal-600" />
+              <h2 className="font-bold text-slate-900 text-base">Warehouse Dispatch Lifecycle</h2>
+            </div>
+            <StatusBadge type="dispatch" value={roll.dispatchStatus} />
+          </div>
+
+          {dispatchError && (
+            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-rose-600 flex-shrink-0" />
+              <span>{dispatchError}</span>
+            </div>
+          )}
+
+          <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
+            <p className="text-xs text-slate-600 max-w-xl">
+              Final quality gate passed. Roll is verified for client shipment staging and warehouse dispatch.
+            </p>
+
+            <div className="flex gap-2">
+              {allowed.canMarkReady && (
+                <button
+                  onClick={() => handleDispatchTransition('READY_FOR_DISPATCH')}
+                  disabled={dispatchSubmitting}
+                  className="py-2 px-4 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-semibold text-xs shadow-sm transition-all disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Mark Ready for Dispatch</span>
+                </button>
+              )}
+
+              {allowed.canUnready && (
+                <button
+                  onClick={() => handleDispatchTransition('NOT_DISPATCHED')}
+                  disabled={dispatchSubmitting}
+                  className="py-2 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs border border-slate-200 transition-all disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                  <span>Undo Ready Status</span>
+                </button>
+              )}
+
+              {allowed.canDispatch && (
+                <button
+                  onClick={() => handleDispatchTransition('DISPATCHED')}
+                  disabled={dispatchSubmitting}
+                  className="py-2 px-4 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-semibold text-xs shadow-sm transition-all disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  <Truck className="w-4 h-4" />
+                  <span>Mark Dispatched (Ship to Buyer)</span>
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* QUALITY INSPECTION AUDIT TIMELINE (GROUPED BY STAGE) */}
+      {/* ========================================================================= */}
       <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm print:hidden space-y-4">
         <div className="flex items-center justify-between pb-3 border-b border-slate-100">
           <div className="flex items-center gap-2">
             <Clock className="w-5 h-5 text-teal-600" />
-            <h2 className="font-bold text-slate-900 text-base">Quality Inspection History (Audit Trail)</h2>
+            <h2 className="font-bold text-slate-900 text-base">Stage Quality Audit Timeline</h2>
           </div>
           <span className="text-xs text-slate-500 font-mono">
             {roll.inspections?.length || 0} event{(roll.inspections?.length || 0) === 1 ? '' : 's'} recorded
@@ -702,18 +1156,24 @@ export const Passport = () => {
 
         {(!roll.inspections || roll.inspections.length === 0) ? (
           <div className="py-8 text-center text-slate-500 text-xs">
-            No inspection entries logged yet. Roll is awaiting initial shopfloor QA check.
+            No inspection entries logged yet. Roll is awaiting initial shopfloor QA check at <strong>{currentStage}</strong> stage.
           </div>
         ) : (
           <div className="space-y-3">
             {roll.inspections.map((entry, idx) => (
               <div
                 key={entry._id || idx}
-                className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5 text-xs"
+                className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5 text-xs"
               >
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
+                    <StatusBadge type="stage" value={entry.stage || 'GREY'} />
                     <StatusBadge type="quality" value={entry.result} />
+                    {entry.isOverride && (
+                      <span className="text-[10px] font-bold text-amber-800 bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-full">
+                        Override
+                      </span>
+                    )}
                     {entry.inspectorName && (
                       <span className="font-semibold text-slate-800">
                         • {entry.inspectorName}
@@ -725,8 +1185,51 @@ export const Passport = () => {
                   </span>
                 </div>
 
+                {/* Points & Recommendation */}
+                <div className="flex flex-wrap items-center gap-4 text-[11px] text-slate-600 bg-white p-2.5 rounded-lg border border-slate-200 font-mono">
+                  <span>
+                    Machine: <strong>{entry.machineCode || 'N/A'}</strong>
+                  </span>
+                  <span>
+                    Points: <strong>{entry.defectPoints || 0}</strong> ({entry.pointsPer100m || 0} pts/100m)
+                  </span>
+                  {entry.recommendedResult && (
+                    <span>
+                      Recommended: <strong>{entry.recommendedResult}</strong>
+                    </span>
+                  )}
+                </div>
+
+                {/* Defect Chips */}
+                {entry.defects && entry.defects.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {entry.defects.map((d, dIdx) => (
+                      <span
+                        key={dIdx}
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border ${
+                          d.severity === 'CRITICAL'
+                            ? 'bg-rose-50 text-rose-700 border-rose-200'
+                            : d.severity === 'MAJOR'
+                            ? 'bg-amber-50 text-amber-700 border-amber-200'
+                            : 'bg-slate-100 text-slate-700 border-slate-200'
+                        }`}
+                      >
+                        <span>{d.quantity}x</span>
+                        <span>{d.code}</span>
+                        <span>({d.severity})</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {entry.overrideReason && (
+                  <p className="text-amber-800 bg-amber-50/70 p-2 rounded-lg border border-amber-200 text-xs italic">
+                    <strong>Override Reason:</strong> {entry.overrideReason}
+                  </p>
+                )}
+
                 {entry.defectNotes && (
-                  <p className="text-slate-700 pt-1 text-xs">
+                  <p className="text-slate-700 pt-0.5 text-xs">
                     {entry.defectNotes}
                   </p>
                 )}

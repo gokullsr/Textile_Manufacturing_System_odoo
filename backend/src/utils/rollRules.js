@@ -3,6 +3,13 @@
  * Zero database or React dependencies — completely unit testable.
  */
 const { ROLL_LIMITS, ROLL_ID_REGEX } = require('../config/thresholds');
+const {
+  validateDefects,
+  evaluateInspection,
+  validateOverride,
+  checkAdvanceEligibility,
+  calculateEnhancedAllowedActions,
+} = require('./qualityGateEngine');
 
 const VALID_INSPECTION_RESULTS = ['PASS', 'REWORK', 'REJECT'];
 const VALID_DISPATCH_STATUSES = ['NOT_DISPATCHED', 'READY_FOR_DISPATCH', 'DISPATCHED'];
@@ -61,9 +68,18 @@ const validateQuantityMetres = (quantity) => {
 };
 
 /**
- * Validates quality inspection submission.
+ * Validates quality inspection submission (Module 2 + Module 4).
  */
-const validateInspectionInput = ({ result, defectNotes, inspectorName }) => {
+const validateInspectionInput = ({
+  result,
+  defectNotes,
+  inspectorName,
+  defects = [],
+  overrideReason,
+  stage = 'GREY',
+  quantityMetres = 100,
+  reworkCountAtStage = 0,
+}) => {
   if (!result || !VALID_INSPECTION_RESULTS.includes(result)) {
     return {
       valid: false,
@@ -109,18 +125,54 @@ const validateInspectionInput = ({ result, defectNotes, inspectorName }) => {
     }
   }
 
+  // If defects are provided, validate defect catalog membership
+  if (Array.isArray(defects) && defects.length > 0) {
+    const defCheck = validateDefects(defects, stage);
+    if (!defCheck.valid) {
+      return defCheck;
+    }
+  }
+
+  // Calculate points and recommended verdict
+  const evalResult = evaluateInspection({
+    stage,
+    quantityMetres,
+    defects,
+    reworkCountAtStage,
+  });
+
+  // Validate override
+  const overrideCheck = validateOverride(evalResult.recommendedResult, result, overrideReason);
+  if (!overrideCheck.valid) {
+    return overrideCheck;
+  }
+
   return {
     valid: true,
     result,
     defectNotes: trimmedNotes,
     inspectorName: sanitizedInspector,
+    defects: defects || [],
+    defectPoints: evalResult.defectPoints,
+    pointsPer100m: evalResult.pointsPer100m,
+    recommendedResult: evalResult.recommendedResult,
+    calculation: evalResult.calculation,
+    explanation: evalResult.explanation,
+    isOverride: overrideCheck.isOverride,
+    overrideReason: overrideCheck.overrideReason,
   };
 };
 
 /**
- * Evaluates allowed dispatch transition.
+ * Evaluates allowed dispatch transition (Module 2 + Module 4).
+ * Dispatching is strictly permitted only when stage === 'FINAL' and qualityStatus === 'PASS'.
  */
-const validateDispatchTransition = (currentDispatchStatus, currentQualityStatus, targetDispatchStatus) => {
+const validateDispatchTransition = (
+  currentDispatchStatus,
+  currentQualityStatus,
+  targetDispatchStatus,
+  currentStage = 'FINAL'
+) => {
   if (!VALID_DISPATCH_STATUSES.includes(targetDispatchStatus)) {
     return {
       valid: false,
@@ -145,7 +197,7 @@ const validateDispatchTransition = (currentDispatchStatus, currentQualityStatus,
     return { valid: true };
   }
 
-  // 3. Advancing to READY_FOR_DISPATCH or DISPATCHED requires PASS quality
+  // 3. Advancing to READY_FOR_DISPATCH or DISPATCHED requires PASS quality AND stage = FINAL
   if (targetDispatchStatus === 'READY_FOR_DISPATCH' || targetDispatchStatus === 'DISPATCHED') {
     if (currentQualityStatus !== 'PASS') {
       return {
@@ -155,6 +207,16 @@ const validateDispatchTransition = (currentDispatchStatus, currentQualityStatus,
         code: 'QUALITY_STATUS_NOT_PASS',
       };
     }
+
+    if (currentStage && currentStage !== 'FINAL' && currentStage !== 'finished') {
+      return {
+        valid: false,
+        status: 409,
+        error: `Cannot dispatch roll at stage '${currentStage}'. Roll must complete all quality gates through 'FINAL' inspection before dispatch.`,
+        code: 'DISPATCH_STAGE_INVALID',
+      };
+    }
+
     return { valid: true };
   }
 
@@ -165,26 +227,16 @@ const validateDispatchTransition = (currentDispatchStatus, currentQualityStatus,
  * Computes allowed actions for the client UI.
  */
 const calculateAllowedActions = (roll) => {
-  const quality = roll.qualityStatus || 'PENDING';
-  const dispatch = roll.dispatchStatus || 'NOT_DISPATCHED';
-
-  const canInspect = dispatch !== 'DISPATCHED';
-  const canMarkReady = quality === 'PASS' && dispatch === 'NOT_DISPATCHED';
-  const canUnready = dispatch === 'READY_FOR_DISPATCH';
-  const canDispatch = quality === 'PASS' && dispatch !== 'DISPATCHED';
-
-  return {
-    canInspect,
-    canMarkReady,
-    canUnready,
-    canDispatch,
-  };
+  return calculateEnhancedAllowedActions(roll);
 };
 
 module.exports = {
+  VALID_INSPECTION_RESULTS,
+  VALID_DISPATCH_STATUSES,
   validateRollId,
   validateQuantityMetres,
   validateInspectionInput,
   validateDispatchTransition,
   calculateAllowedActions,
+  checkAdvanceEligibility,
 };
